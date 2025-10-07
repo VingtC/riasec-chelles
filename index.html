@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Comparateur RIASEC — multi-échelles</title>
+  <title>Comparateur RIASEC — multi-échelles (D sur base 100)</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 18px; color:#222; }
@@ -50,7 +50,7 @@
   </header>
 
   <main>
-    <div class="small">Ajoute des échelles, renseigne nom, étendue et scores R,I,A,S,E,C. Coche un ou plusieurs éléments pour les afficher.</div>
+    <div class="small">Ajoute des échelles, renseigne nom, étendue et scores R,I,A,S,E,C. Coche un ou plusieurs éléments pour les afficher. Pour la lisibilité, éviter d'afficher trop de courbes simultanément.</div>
 
     <div id="scalesContainer" class="scales"></div>
 
@@ -59,7 +59,7 @@
       <div id="summary" aria-live="polite"></div>
 
       <ul class="note" id="footnote">
-        <li>La différentiation est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltram <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a></li>
+        La différentiation est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltram <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a>
       </ul>
 
       <div class="note" id="diff-interpretation">
@@ -69,10 +69,9 @@
   </main>
 
   <script>
-    // Constantes et état
     const LABELS = ['R','I','A','S','E','C'];
     let scaleIdCounter = 0;
-    let scales = []; // {id, name, max, values:[6], selected}
+    let scales = [];
 
     const BASE_COLORS = [
       'rgba(220,53,69,1)',
@@ -184,9 +183,16 @@
       return true;
     }
 
-    function normalizeValue(value, max) {
+    // Normalisation pour le graphique (0..5)
+    function normalizeForChart(value, max) {
       if (max <= 0) return 0;
       return Math.round((value / max) * 5 * 10) / 10;
+    }
+
+    // Normalisation sur base 100 pour le calcul D
+    function toPercent100(value, max) {
+      if (max <= 0) return 0;
+      return (value / max) * 100;
     }
 
     function getTopTwoTypes(scores) {
@@ -195,7 +201,6 @@
       return [paired[0].type, paired[1].type];
     }
 
-    // CONSISTANCE (anciennement convergence)
     function evaluateConsistance(type1, type2) {
       const hex = ['R','I','A','S','E','C'];
       const i1 = hex.indexOf(type1), i2 = hex.indexOf(type2);
@@ -205,9 +210,13 @@
       return 'Faible';
     }
 
-    function computeDifferentiationIndex(scores) {
-      const s = scores.slice().sort((a,b)=>b-a);
-      const [t1,t2,t3,t4,t5] = [s[0], s[1], s[2], s[3], s[4]];
+    // Calcul de l'indice D sur base 0..100
+    // D = (t1 - (t2+t3)/2) + (t3 - (t4+t5)/2) where t's are scores triés décroissants (en %)
+    function computeDifferentiationIndex_on100(values, max) {
+      // convert to % (0..100)
+      const pct = values.map(v => toPercent100(parseFloat(v), max));
+      const s = pct.slice().sort((a,b)=> b - a); // décroissant
+      const t1 = s[0] || 0, t2 = s[1] || 0, t3 = s[2] || 0, t4 = s[3] || 0, t5 = s[4] || 0;
       const D = (t1 - (t2 + t3)/2) + (t3 - (t4 + t5)/2);
       return Math.round(D * 100) / 100;
     }
@@ -227,6 +236,7 @@
           const r = sex === 'homme' ? c.homme : c.femme;
           if (D >= r[0] && D <= r[1]) return c.name;
         }
+        // si D hors plage supérieure on renvoie VII
         return 'VII';
       };
       return { homme: findClass(D,'homme'), femme: findClass(D,'femme') };
@@ -277,8 +287,9 @@
 
     function buildSummary(entries) {
       return entries.map((e,i) => {
-        const diffLevel = differentiationLevelFromClass(e.class.homme); // same classement pour H/F catégories
-        return `${i+1}. ${e.name}: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}; D=${e.D}; Classe H:${e.class.homme}/F:${e.class.femme} → Niveau différenciation: ${diffLevel}`;
+        const diffLevelH = differentiationLevelFromClass(e.class.homme);
+        const diffLevelF = differentiationLevelFromClass(e.class.femme);
+        return `${i+1}. ${e.name}: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}; D=${e.D} (sur base 100); Classe H:${e.class.homme} → ${diffLevelH}; Classe F:${e.class.femme} → ${diffLevelF}`;
       }).join('\n');
     }
 
@@ -300,20 +311,24 @@
 
       const datasets = [], labelsForDatasets = [], summaries = [];
       selected.forEach((s, idx) => {
-        const norm = s.values.map(v => normalizeValue(parseFloat(v), s.max));
+        // dataset pour chart normalisé 0..5
+        const norm = s.values.map(v => normalizeForChart(parseFloat(v), s.max));
         datasets.push(norm);
         labelsForDatasets.push(`${s.name} (max ${s.max})`);
+
+        // top two and consistance based on normalized-for-chart scores (equivalent order)
         const top = getTopTwoTypes(norm);
         const cons = evaluateConsistance(top[0], top[1]);
-        const D = computeDifferentiationIndex(norm);
+
+        // D computed on base 100 using raw values + s.max
+        const D = computeDifferentiationIndex_on100(s.values, s.max);
         const cls = classifyDifferentiation(D);
-        summaries.push({ name: s.name, top, consistance: cons, cons, D, class: cls });
+
+        summaries.push({ name: s.name, top, consistance: cons, D, class: cls });
       });
 
       renderChart(datasets, labelsForDatasets);
-      // map summaries into display-friendly entries using field 'consistance'
-      const displayEntries = summaries.map(s => ({ name: s.name, top: s.top, consistance: s.cons, D: s.D, class: s.class }));
-      document.getElementById('summary').innerText = buildSummary(displayEntries);
+      document.getElementById('summary').innerText = buildSummary(summaries);
     });
 
     function updateEmptyIfNeeded() {
@@ -326,6 +341,86 @@
 
     function escapeHtml(str) {
       return String(str).replace(/[&<>"']/g, (m)=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
+    }
+
+    // fonctions utilitaires restantes (réutilisées)
+    function validateScale(s) {
+      for (let i=0;i<6;i++) {
+        const raw = s.values[i];
+        const v = parseFloat(raw);
+        if (raw === '' || isNaN(v) || v < 0 || v > s.max) return false;
+      }
+      return true;
+    }
+
+    function normalizeForChart(value, max) {
+      if (max <= 0) return 0;
+      return Math.round((value / max) * 5 * 10) / 10;
+    }
+
+    function getTopTwoTypes(scores) {
+      const paired = LABELS.map((lab,i)=>({ type:lab, score:scores[i] }));
+      paired.sort((a,b)=> b.score - a.score);
+      return [paired[0].type, paired[1].type];
+    }
+
+    // routines d'ajout/gestion des échelles (identiques à la version précédente)
+    function updateScaleMeta(id, prop, val) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      if (prop === 'max') s.max = (isNaN(val) || val <= 0) ? 1 : val;
+      else s.name = String(val || '');
+    }
+
+    function updateScaleValue(id, label, raw) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      const idx = LABELS.indexOf(label);
+      const v = parseFloat(raw);
+      s.values[idx] = raw === '' ? '' : (isNaN(v) ? '' : v);
+      const input = document.getElementById(`val-${id}-${label}`);
+      if (raw === '' || isNaN(v) || v < 0 || v > s.max) input.classList.add('invalid');
+      else input.classList.remove('invalid');
+    }
+
+    function updateScaleMetaListenerSetup(id) {
+      document.getElementById(`name-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'name', e.target.value));
+      document.getElementById(`max-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'max', parseFloat(e.target.value)));
+      LABELS.forEach(L => {
+        document.getElementById(`val-${id}-${L}`).addEventListener('input', (e)=> updateScaleValue(id, L, e.target.value));
+      });
+    }
+
+    // reconstruction addScale to ensure listeners defined once (kept simple)
+    function addScale(name='Échelle', max=5, values=[0,0,0,0,0,0]) {
+      const id = ++scaleIdCounter;
+      const s = { id, name, max, values: values.slice(), selected: false };
+      scales.push(s);
+
+      const container = document.getElementById('scalesContainer');
+      const el = document.createElement('div');
+      el.className = 'scale';
+      el.id = `scale-${id}`;
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="select-${id}" aria-label="Sélection ${id}">
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div class="row">
+            <h4>Échelle</h4>
+            <input type="text" id="name-${id}" value="${escapeHtml(name)}" style="min-width:160px;">
+            <label>Étendue max</label>
+            <input type="number" id="max-${id}" value="${max}" min="1" step="any" style="width:85px;">
+            <button class="btn btn-danger" id="del-${id}" title="Supprimer">Suppr</button>
+          </div>
+          <div class="scores" id="scores-${id}">
+            ${LABELS.map((L,i)=>`<label>${L}: <input type="number" id="val-${id}-${L}" value="${values[i]}" step="any"></label>`).join('')}
+          </div>
+        </div>
+      `;
+      container.appendChild(el);
+
+      document.getElementById(`del-${id}`).addEventListener('click', ()=> removeScale(id));
+      document.getElementById(`select-${id}`).addEventListener('change', (e)=> toggleSelect(id, e.target.checked));
+      updateScaleMetaListenerSetup(id);
     }
   </script>
 </body>
