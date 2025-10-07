@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Comparateur RIASEC — multi-échelles</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; color:#222; }
+    header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+    h1 { font-size:1.2rem; margin:0; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .scales { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+    .scale {
+      border:1px solid #ddd; padding:10px; border-radius:8px; background:#fafafa;
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    .scale h4 { margin:0 8px 0 0; font-size:0.95rem; }
+    label { font-size:0.9rem; }
+    input[type="text"], input[type="number"] {
+      padding:6px 8px; border:1px solid #ccc; border-radius:6px; font-size:0.9rem;
+    }
+    .scores { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .scores input { width:70px; }
+    .invalid { border-color:#d93025; background:#ffecec; }
+    .btn { padding:8px 12px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+    .btn-primary { background:#2b6cb0; color:white; }
+    .btn-ghost { background:#fff; border:1px solid #ccc; color:#222; }
+    .btn-danger { background:#d9534f; color:white; }
+    #chart-wrap { max-width:920px; margin:18px auto; }
+    #riasecChart { width:100% !important; height:520px !important; display:block; }
+    #summary { text-align:left; margin-top:12px; font-weight:600; white-space:pre-wrap; }
+    .small { font-weight:400; font-size:0.9rem; color:#444; margin-top:6px; }
+    .note { font-size:0.9rem; color:#333; margin-top:8px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    @media (max-width:520px) {
+      .scores input { width:56px; }
+      input[type="text"], input[type="number"] { width:100%; }
+      .scale { flex-direction:column; align-items:stretch; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Comparateur RIASEC — multi-échelles</h1>
+    <div class="controls">
+      <button id="addScaleBtn" class="btn btn-primary">+ Ajouter une échelle</button>
+      <button id="plotBtn" class="btn btn-primary">Afficher le graphique (sélection libre)</button>
+      <button id="resetBtn" class="btn btn-ghost">Réinitialiser</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="small">Ajoute des échelles, renseigne nom, étendue et scores R,I,A,S,E,C. Coche un ou plusieurs éléments pour les afficher.</div>
+
+    <div id="scalesContainer" class="scales"></div>
+
+    <div id="chart-wrap">
+      <canvas id="riasecChart"></canvas>
+      <div id="summary" aria-live="polite"></div>
+
+      <ul class="note" id="footnote">
+        <li>La différentiation est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltram <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a></li>
+      </ul>
+
+      <div class="note" id="diff-interpretation">
+        <strong>Interprétation de la différenciation</strong> : un indice de différenciation étalonné en classe IV indique un profil RIASEC moyennement différencié ; en classe I, II ou III le profil est faiblement différencié ; en classe V, VI ou VII le profil est fortement différencié.
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Constantes et état
+    const LABELS = ['R','I','A','S','E','C'];
+    let scaleIdCounter = 0;
+    let scales = []; // {id, name, max, values:[6], selected}
+
+    const BASE_COLORS = [
+      'rgba(220,53,69,1)',
+      'rgba(13,110,253,1)',
+      'rgba(40,167,69,1)',
+      'rgba(255,193,7,1)',
+      'rgba(102,16,242,1)',
+      'rgba(23,162,184,1)',
+      'rgba(255,87,34,1)',
+      'rgba(0,123,255,1)'
+    ];
+
+    function colorForIndex(i) {
+      const base = BASE_COLORS[i % BASE_COLORS.length];
+      const bg = base.replace(/1\)$/, '0.18)');
+      return { border: base, background: bg };
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+    });
+
+    function addScale(name='Échelle', max=5, values=[0,0,0,0,0,0]) {
+      const id = ++scaleIdCounter;
+      const s = { id, name, max, values: values.slice(), selected: false };
+      scales.push(s);
+
+      const container = document.getElementById('scalesContainer');
+      const el = document.createElement('div');
+      el.className = 'scale';
+      el.id = `scale-${id}`;
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="select-${id}" aria-label="Sélection ${id}">
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div class="row">
+            <h4>Échelle</h4>
+            <input type="text" id="name-${id}" value="${escapeHtml(name)}" style="min-width:160px;">
+            <label>Étendue max</label>
+            <input type="number" id="max-${id}" value="${max}" min="1" step="any" style="width:85px;">
+            <button class="btn btn-danger" id="del-${id}" title="Supprimer">Suppr</button>
+          </div>
+          <div class="scores" id="scores-${id}">
+            ${LABELS.map((L,i)=>`<label>${L}: <input type="number" id="val-${id}-${L}" value="${values[i]}" step="any"></label>`).join('')}
+          </div>
+        </div>
+      `;
+      container.appendChild(el);
+
+      document.getElementById(`del-${id}`).addEventListener('click', ()=> removeScale(id));
+      document.getElementById(`select-${id}`).addEventListener('change', (e)=> toggleSelect(id, e.target.checked));
+      document.getElementById(`name-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'name', e.target.value));
+      document.getElementById(`max-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'max', parseFloat(e.target.value)));
+      LABELS.forEach(L => {
+        document.getElementById(`val-${id}-${L}`).addEventListener('input', (e)=> updateScaleValue(id, L, e.target.value));
+      });
+    }
+
+    function removeScale(id) {
+      scales = scales.filter(s=>s.id!==id);
+      const el = document.getElementById(`scale-${id}`); if (el) el.remove();
+      updateEmptyIfNeeded();
+    }
+
+    function updateScaleMeta(id, prop, val) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      if (prop === 'max') s.max = (isNaN(val) || val <= 0) ? 1 : val;
+      else s.name = String(val || '');
+    }
+
+    function updateScaleValue(id, label, raw) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      const idx = LABELS.indexOf(label);
+      const v = parseFloat(raw);
+      s.values[idx] = raw === '' ? '' : (isNaN(v) ? '' : v);
+      const input = document.getElementById(`val-${id}-${label}`);
+      if (raw === '' || isNaN(v) || v < 0 || v > s.max) input.classList.add('invalid');
+      else input.classList.remove('invalid');
+    }
+
+    function toggleSelect(id, checked) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      s.selected = checked;
+    }
+
+    document.getElementById('addScaleBtn').addEventListener('click', ()=> {
+      addScale('Nouvelle échelle', 5, [0,0,0,0,0,0]);
+      const last = document.getElementById(`scale-${scaleIdCounter}`);
+      if (last) last.scrollIntoView({ behavior:'smooth', block:'center' });
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', ()=> {
+      scales = []; scaleIdCounter = 0;
+      document.getElementById('scalesContainer').innerHTML = '';
+      document.getElementById('summary').innerText = '';
+      if (window.myChart) { window.myChart.destroy(); window.myChart = null; }
+      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+    });
+
+    function validateScale(s) {
+      for (let i=0;i<6;i++) {
+        const raw = s.values[i];
+        const v = parseFloat(raw);
+        if (raw === '' || isNaN(v) || v < 0 || v > s.max) return false;
+      }
+      return true;
+    }
+
+    function normalizeValue(value, max) {
+      if (max <= 0) return 0;
+      return Math.round((value / max) * 5 * 10) / 10;
+    }
+
+    function getTopTwoTypes(scores) {
+      const paired = LABELS.map((lab,i)=>({ type:lab, score:scores[i] }));
+      paired.sort((a,b)=> b.score - a.score);
+      return [paired[0].type, paired[1].type];
+    }
+
+    // CONSISTANCE (anciennement convergence)
+    function evaluateConsistance(type1, type2) {
+      const hex = ['R','I','A','S','E','C'];
+      const i1 = hex.indexOf(type1), i2 = hex.indexOf(type2);
+      const d = Math.min(Math.abs(i1-i2), 6 - Math.abs(i1-i2));
+      if (d === 1) return 'Forte';
+      if (d === 2) return 'Moyenne';
+      return 'Faible';
+    }
+
+    function computeDifferentiationIndex(scores) {
+      const s = scores.slice().sort((a,b)=>b-a);
+      const [t1,t2,t3,t4,t5] = [s[0], s[1], s[2], s[3], s[4]];
+      const D = (t1 - (t2 + t3)/2) + (t3 - (t4 + t5)/2);
+      return Math.round(D * 100) / 100;
+    }
+
+    function classifyDifferentiation(D) {
+      const classes = [
+        { name:'I', homme:[0,2], femme:[0,2] },
+        { name:'II', homme:[3,4], femme:[3,4] },
+        { name:'III', homme:[5,6], femme:[5,6] },
+        { name:'IV', homme:[7,9], femme:[7,9] },
+        { name:'V', homme:[10,12], femme:[10,12] },
+        { name:'VI', homme:[13,15], femme:[13,15] },
+        { name:'VII', homme:[16,21], femme:[16,24] }
+      ];
+      const findClass = (D, sex) => {
+        for (let c of classes) {
+          const r = sex === 'homme' ? c.homme : c.femme;
+          if (D >= r[0] && D <= r[1]) return c.name;
+        }
+        return 'VII';
+      };
+      return { homme: findClass(D,'homme'), femme: findClass(D,'femme') };
+    }
+
+    function differentiationLevelFromClass(clsName) {
+      if (['I','II','III'].includes(clsName)) return 'Faible';
+      if (clsName === 'IV') return 'Moyenne';
+      return 'Forte';
+    }
+
+    function renderChart(datasets, labelsForDatasets) {
+      const data = {
+        labels: LABELS,
+        datasets: datasets.map((d,i) => {
+          const col = colorForIndex(i);
+          return {
+            label: labelsForDatasets[i],
+            data: d,
+            borderColor: col.border,
+            backgroundColor: col.background,
+            pointBackgroundColor: col.border,
+            fill: true
+          };
+        })
+      };
+
+      const config = {
+        type: 'radar',
+        data,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: { min:0, max:5, ticks:{ stepSize:1 }, pointLabels: { font: { size:12 } } }
+          },
+          plugins: {
+            title: { display:true, text:'Profil RIASEC (normalisé 1–5)' },
+            legend: { position:'top', labels: { usePointStyle:true } }
+          }
+        }
+      };
+
+      const ctx = document.getElementById('riasecChart');
+      if (window.myChart) window.myChart.destroy();
+      window.myChart = new Chart(ctx, config);
+    }
+
+    function buildSummary(entries) {
+      return entries.map((e,i) => {
+        const diffLevel = differentiationLevelFromClass(e.class.homme); // same classement pour H/F catégories
+        return `${i+1}. ${e.name}: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}; D=${e.D}; Classe H:${e.class.homme}/F:${e.class.femme} → Niveau différenciation: ${diffLevel}`;
+      }).join('\n');
+    }
+
+    document.getElementById('plotBtn').addEventListener('click', ()=> {
+      const selected = scales.filter(s=>s.selected);
+      if (selected.length === 0) { alert('Sélectionne au moins une échelle à afficher.'); return; }
+
+      for (let s of selected) {
+        if (!validateScale(s)) {
+          LABELS.forEach((L,i)=> {
+            const input = document.getElementById(`val-${s.id}-${L}`);
+            const v = parseFloat(s.values[i]);
+            if (s.values[i] === '' || isNaN(v) || v < 0 || v > s.max) input.classList.add('invalid');
+          });
+          alert(`Échelle "${s.name}" contient des valeurs invalides. Corrige les champs en rouge.`);
+          return;
+        }
+      }
+
+      const datasets = [], labelsForDatasets = [], summaries = [];
+      selected.forEach((s, idx) => {
+        const norm = s.values.map(v => normalizeValue(parseFloat(v), s.max));
+        datasets.push(norm);
+        labelsForDatasets.push(`${s.name} (max ${s.max})`);
+        const top = getTopTwoTypes(norm);
+        const cons = evaluateConsistance(top[0], top[1]);
+        const D = computeDifferentiationIndex(norm);
+        const cls = classifyDifferentiation(D);
+        summaries.push({ name: s.name, top, consistance: cons, cons, D, class: cls });
+      });
+
+      renderChart(datasets, labelsForDatasets);
+      // map summaries into display-friendly entries using field 'consistance'
+      const displayEntries = summaries.map(s => ({ name: s.name, top: s.top, consistance: s.cons, D: s.D, class: s.class }));
+      document.getElementById('summary').innerText = buildSummary(displayEntries);
+    });
+
+    function updateEmptyIfNeeded() {
+      const anySelected = scales.some(s=>s.selected);
+      if (!anySelected) {
+        if (window.myChart) { window.myChart.destroy(); window.myChart = null; }
+        document.getElementById('summary').innerText = '';
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (m)=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
+    }
+  </script>
+</body>
+</html>
