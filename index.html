@@ -28,7 +28,7 @@
     .btn-danger { background:#d9534f; color:white; }
     #chart-wrap { max-width:920px; margin:18px auto; }
     #riasecChart { width:100% !important; height:520px !important; display:block; }
-    #summary { text-align:left; margin-top:12px; font-weight:600; white-space:pre-wrap; }
+    #summary { text-align:left; margin-top:12px; font-weight:400; white-space:pre-wrap; line-height:1.4; font-size:0.95rem; }
     .small { font-weight:400; font-size:0.9rem; color:#444; margin-top:6px; }
     .note { font-size:0.9rem; color:#333; margin-top:8px; }
     .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -69,6 +69,10 @@
 
       <div class="prediger" id="prediger-note">
         Les <strong>dimensions de Prediger</strong> (calculées avec la méthode de <a href="https://www.researchgate.net/publication/232418263_Adherence_to_RIASEC_Structure_as_a_Key_Career_Decision_Construct" target="_blank">Tracey</a>) sont : <em>Objets vs Personnes</em> et <em>Faits vs Idées</em>.
+      </div>
+
+      <div class="note" id="kendall-note">
+        <strong>Analyse de concordance (Kendall W)</strong> : Le coefficient W mesure l'accord entre plusieurs échelles RIASEC sur le classement des types. W varie de 0 (aucune concordance) à 1 (concordance parfaite). Le test de significativité indique si l'accord observé est statistiquement fiable.
       </div>
     </div>
   </main>
@@ -212,7 +216,7 @@
     document.getElementById('resetBtn').addEventListener('click', ()=> {
       scales = []; scaleIdCounter = 0;
       document.getElementById('scalesContainer').innerHTML = '';
-      document.getElementById('summary').innerText = '';
+      document.getElementById('summary').innerHTML = '';
       if (window.myChart) { window.myChart.destroy(); window.myChart = null; }
       addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
       addScale('Test en ligne', 100, [0,0,0,0,0,0]);
@@ -230,6 +234,143 @@
     // =================================================================================
     // FONCTIONS DE CALCUL ET DE NORMALISATION
     // =================================================================================
+
+    /**
+     * Calcule le coefficient de concordance de Kendall (W)
+     * Mesure l'accord entre plusieurs échelles sur les scores RIASEC
+     * @param {object[]} scales - Tableau d'échelles sélectionnées avec scores valides
+     * @returns {object} Objet contenant W, chi2, df, p-value et interprétation
+     */
+    function computeKendallW(scales) {
+      if (scales.length < 2) {
+        return { W: null, chi2: null, df: null, p: null, interpretation: "Besoin d'au moins 2 échelles pour calculer la concordance" };
+      }
+
+      const n = scales.length; // nombre d'échelles (juges)
+      const m = 6; // nombre de types RIASEC (éléments à évaluer)
+
+      // Convertit les scores en rangs pour chaque échelle
+      const ranks = scales.map(scale => {
+        // Pour chaque échelle, classe les scores RIASEC par ordre décroissant
+        const scores = scale.values.map(v => parseFloat(v));
+        const sortedIndices = scores.map((score, index) => ({ score, index }))
+                                  .sort((a, b) => b.score - a.score)
+                                  .map(item => item.index);
+
+        // Attribue les rangs (1 = plus haut score, 6 = plus bas score)
+        const rank = new Array(6).fill(0);
+        sortedIndices.forEach((idx, position) => {
+          rank[idx] = position + 1; // rang de 1 à 6
+        });
+
+        return rank;
+      });
+
+      // Calcule la somme des rangs pour chaque type RIASEC
+      const sumRanks = new Array(m).fill(0);
+      for (let j = 0; j < m; j++) {
+        for (let i = 0; i < n; i++) {
+          sumRanks[j] += ranks[i][j];
+        }
+      }
+
+      // Calcule la moyenne des rangs
+      const meanRank = sumRanks.reduce((sum, r) => sum + r, 0) / m;
+
+      // Calcule la somme des carrés des écarts à la moyenne
+      let sumSquaredDeviations = 0;
+      for (let j = 0; j < m; j++) {
+        const deviation = sumRanks[j] - meanRank;
+        sumSquaredDeviations += deviation * deviation;
+      }
+
+      // Calcule le coefficient W
+      const numerator = 12 * sumSquaredDeviations;
+      const denominator = n * n * (m * m * m - m);
+      const W = numerator / denominator;
+
+      // Test de significativité (Khi-deux)
+      const chi2 = (n * (m - 1) * W);
+      const df = m - 1;
+
+      // Calcule le p-value approximatif
+      let p = null;
+      if (chi2 > 0 && df > 0) {
+        // Approximation du khi-deux avec df degrés de liberté
+        p = chiSquarePValue(chi2, df);
+      }
+
+      // Interprétation du résultat
+      let interpretation = "";
+      if (W === null) {
+        interpretation = "Impossible de calculer le coefficient";
+      } else if (W < 0.1) {
+        interpretation = "Concordance très faible - Les échelles divergent considérablement";
+      } else if (W < 0.3) {
+        interpretation = "Concordance faible - Divergences notables entre les échelles";
+      } else if (W < 0.5) {
+        interpretation = "Concordance modérée - Accord partiel entre les échelles";
+      } else if (W < 0.7) {
+        interpretation = "Bonne concordance - Accord satisfaisant entre les échelles";
+      } else if (W < 0.9) {
+        interpretation = "Forte concordance - Très bon accord entre les échelles";
+      } else {
+        interpretation = "Concordance excellente - Accord quasi parfait entre les échelles";
+      }
+
+      // Ajoute l'interprétation de la significativité
+      if (p !== null) {
+        if (p < 0.001) {
+          interpretation += `\nLa concordance est hautement significative (p < 0.001)`;
+        } else if (p < 0.01) {
+          interpretation += `\nLa concordance est très significative (p < 0.01)`;
+        } else if (p < 0.05) {
+          interpretation += `\nLa concordance est significative (p < 0.05)`;
+        } else {
+          interpretation += `\nLa concordance n'est pas significative (p = ${p.toFixed(3)})`;
+        }
+      }
+
+      return {
+        W: Math.round(W * 1000) / 1000, // arrondi à 3 décimales
+        chi2: Math.round(chi2 * 100) / 100,
+        df: df,
+        p: p,
+        interpretation: interpretation
+      };
+    }
+
+    /**
+     * Calcule approximativement la p-value pour un test du khi-deux
+     * @param {number} chi2 - Valeur du khi-deux
+     * @param {number} df - Degrés de liberté
+     * @returns {number} p-value approximative
+     */
+    function chiSquarePValue(chi2, df) {
+      // Approximation grossière pour les besoins de cette application
+      // Dans un contexte réel, utiliser une bibliothèque statistique
+
+      // Table de valeurs critiques approximatives pour différents df
+      const criticalValues = {
+        1: [3.84, 6.63, 10.83],    // p=0.05, 0.01, 0.001
+        2: [5.99, 9.21, 13.82],
+        3: [7.81, 11.34, 16.27],
+        4: [9.49, 13.28, 18.47],
+        5: [11.07, 15.09, 20.52],
+        6: [12.59, 16.81, 22.46],
+        7: [14.07, 18.48, 24.32],
+        8: [15.51, 20.09, 26.12],
+        9: [16.92, 21.67, 27.88],
+        10: [18.31, 23.21, 29.59]
+      };
+
+      const crit = criticalValues[df] || criticalValues[10];
+
+      if (chi2 < crit[0]) return Math.max(0.05, 0.5 / Math.pow(chi2 + 1, 0.5));
+      if (chi2 < crit[1]) return Math.max(0.01, 0.05 / Math.pow(chi2 + 1, 0.3));
+      if (chi2 < crit[2]) return Math.max(0.001, 0.01 / Math.pow(chi2 + 1, 0.2));
+      return 0.001; // Très significative
+    }
     /**
      * Normalise une valeur pour l'affichage sur le graphique radar (échelle 0-5)
      * @param {number} value - Valeur brute à normaliser
@@ -463,17 +604,17 @@
         const diffLevelF = differentiationLevelFromClass(e.class.femme);
 
         // Interprète les dimensions de Prediger
-        const things_label = e.pred.things_people > 0 ? 'Orientation Objets' :
-                           (e.pred.things_people < 0 ? 'Orientation Personnes' : 'Neutre');
-        const ideas_label = e.pred.ideas_data > 0 ? 'Orientation Idées' :
-                          (e.pred.ideas_data < 0 ? 'Orientation Faits' : 'Neutre');
+        const things_label = e.pred.things_people > 0 ? '<strong>Objets</strong>' :
+                           (e.pred.things_people < 0 ? '<strong>Personnes</strong>' : '<strong>Neutre</strong>');
+        const ideas_label = e.pred.ideas_data > 0 ? '<strong>Idées</strong>' :
+                          (e.pred.ideas_data < 0 ? '<strong>Faits</strong>' : '<strong>Neutre</strong>');
 
-        // Formatage du résumé pour une échelle
-        return `${i+1}. ${e.name}:\n` +
-               `  Top: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}\n` +
-               `  D=${e.D} (sur base 100) • Classe H:${e.class.homme}/${diffLevelH} • Classe F:${e.class.femme}/${diffLevelF}\n` +
-               `  Prediger: Objets/Personnes=${e.pred.things_people} (${things_label}); Faits/Idées=${e.pred.ideas_data} (${ideas_label})`;
-      }).join('\n\n');
+        // Formatage du résumé harmonisé pour une échelle
+        return `${i+1}. <strong>${e.name}</strong><br>` +
+               `   Types: <strong>${e.top[0]}${e.top[1]}</strong> → <strong>Consistance ${e.consistance}</strong><br>` +
+               `   Différentiation: <strong>${diffLevelH}</strong> (H) / <strong>${diffLevelF}</strong> (F) • D=${e.D}<br>` +
+               `   Prediger: ${things_label} / ${ideas_label}`;
+      }).join('<br><br>');
     }
 
     // =================================================================================
@@ -527,9 +668,23 @@
         summaries.push({ name: s.name, top, consistance: cons, D, class: cls, pred });
       });
 
-      // Étape 4: Visualisation et rapport
+      // Étape 4: Calcul du coefficient de concordance de Kendall W
+      const kendallW = computeKendallW(selected);
+
+      // Étape 5: Visualisation et rapport
       renderChart(datasets, labelsForDatasets);           // Crée le graphique
-      document.getElementById('summary').innerText = buildSummary(summaries);  // Affiche le résumé
+
+      // Génère le résumé avec l'analyse Kendall W
+      let fullSummary = buildSummary(summaries);
+
+      // Ajoute l'analyse de concordance si disponible
+      if (selected.length >= 2) {
+        // Extrait seulement le niveau de concordance (avant le premier tiret)
+        const concordanceLevel = kendallW.interpretation.split(' - ')[0];
+        fullSummary = `CONCORDANCE: W=${kendallW.W}, χ²=${kendallW.chi2} (df=${kendallW.df}), p≈${kendallW.p ? kendallW.p.toFixed(3) : 'N/A'} → <strong>${concordanceLevel}</strong><br><br>` + fullSummary;
+      }
+
+      document.getElementById('summary').innerHTML = fullSummary;  // Affiche le résumé
     });
 
     // =================================================================================
@@ -548,7 +703,7 @@
           window.myChart = null;
         }
         // Efface le résumé
-        document.getElementById('summary').innerText = '';
+        document.getElementById('summary').innerHTML = '';
       }
     }
 
