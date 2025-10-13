@@ -534,12 +534,11 @@
       const concordanceText = `\n\n🔁 Concordance globale (Kendall W) sur ${selected.length} échelles:\n` +
         `W = ${kendall.W} • χ² = ${kendall.chi2} (ddl=${kendall.ddl}) • p ${kendall.p}\n` +
         `→ ${kendall.interpretation}`;
-      document.getElementById('summary').innerText += concordanceText;
-    }
+  }
       // Étape 5: Visualisation et rapport
       renderChart(datasets, labelsForDatasets);           // Crée le graphique
       
-      document.getElementById('summary').innerText = buildSummary(summaries);  // Affiche le résumé
+      document.getElementById('summary').innerText = buildSummary(summaries) + concordanceText;  // Affiche le résumé
     });
 
     
