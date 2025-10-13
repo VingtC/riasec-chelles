@@ -532,9 +532,71 @@
       document.getElementById('summary').innerText = buildSummary(summaries);  // Affiche le résumé
     });
 
+    // Étape 5: Analyse de concordance globale (Kendall W)
+    if (selected.length >= 2) {
+      const ranksMatrix = selected.map(s => scoresToRanks(s.values.map(v => parseFloat(v))));
+      const kendall = computeKendallW(ranksMatrix);
+      const concordanceText = `\n\n🔁 Concordance globale (Kendall W) sur ${selected.length} échelles:\n` +
+        `W = ${kendall.W} • χ² = ${kendall.chi2} (ddl=${kendall.ddl}) • p ${kendall.p}\n` +
+        `→ ${kendall.interpretation}`;
+      document.getElementById('summary').innerText += concordanceText;
+    };
+
     // =================================================================================
     // FONCTIONS UTILITAIRES ET GESTION DE L'ÉTAT
     // =================================================================================
+    /**
+ * Calcule l'indice de concordance de Kendall W entre plusieurs échelles
+ * @param {number[][]} ranksMatrix - Matrice des rangs [échelle][type RIASEC]
+ * @returns {object} Objet avec W, chi2, ddl, p-value approximative et interprétation
+ */
+    function computeKendallW(ranksMatrix) {
+      const m = ranksMatrix.length;
+      const n = ranksMatrix[0].length;
+    
+      const sumRanks = Array(n).fill(0);
+      for (let i = 0; i < m; i++) {
+        for (let j = 0; j < n; j++) {
+          sumRanks[j] += ranksMatrix[i][j];
+        }
+      }
+    
+      const mean = sumRanks.reduce((a, b) => a + b, 0) / n;
+      const S = sumRanks.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0);
+      const W = (12 * S) / (m * m * (Math.pow(n, 3) - n));
+      const chi2 = m * (n - 1) * W;
+      const ddl = n - 1;
+    
+      let p;
+      if (chi2 > 16.8) p = "< 0.001";
+      else if (chi2 > 13.3) p = "< 0.01";
+      else if (chi2 > 11.1) p = "< 0.025";
+      else if (chi2 > 9.5) p = "< 0.05";
+      else p = "≥ 0.05";
+    
+      let interpretation = "Faible concordance";
+      if (W >= 0.8) interpretation = "Très forte concordance";
+      else if (W >= 0.6) interpretation = "Bonne concordance";
+      else if (W >= 0.4) interpretation = "Concordance modérée";
+    
+      return { W: Math.round(W * 1000) / 1000, chi2: Math.round(chi2 * 100) / 100, ddl, p, interpretation };
+    }
+    /**
+     * Convertit un tableau de scores en rangs (ordre croissant)
+     * @param {number[]} scores - Tableau de scores RIASEC
+     * @returns {number[]} Tableau de rangs (1 = plus bas)
+     */
+    function scoresToRanks(scores) {
+      const sorted = scores.map((v, i) => ({ v, i }))
+        .sort((a, b) => a.v - b.v);
+      const ranks = Array(scores.length);
+      sorted.forEach((item, idx) => {
+        ranks[item.i] = idx + 1;
+      });
+      return ranks;
+    }
+
+    
     /**
      * Nettoie l'affichage quand aucune échelle n'est sélectionnée
      * Supprime le graphique et efface le résumé pour éviter la confusion
