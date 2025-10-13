@@ -470,8 +470,8 @@
 
         // Formatage du résumé pour une échelle
         return `${i+1}. ${e.name}:\n` +
-               `  Top: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}\n` +
-               `  D=${e.D} (sur base 100) • Classe H:${e.class.homme}/${diffLevelH} • Classe F:${e.class.femme}/${diffLevelF}\n` +
+               `  Profil: ${e.top[0]}${e.top[1]} → Consistance ${e.consistance}\n` +
+               `  Différentiation=${e.D} (sur base 24) • Classe H:${e.class.homme}/${diffLevelH} • Classe F:${e.class.femme}/${diffLevelF}\n` +
                `  Prediger: Objets/Personnes=${e.pred.things_people} (${things_label}); Faits/Idées=${e.pred.ideas_data} (${ideas_label})`;
       }).join('\n\n');
     }
@@ -526,13 +526,8 @@
         // Stockage des résultats pour le résumé
         summaries.push({ name: s.name, top, consistance: cons, D, class: cls, pred });
       });
-
-      // Étape 4: Visualisation et rapport
-      renderChart(datasets, labelsForDatasets);           // Crée le graphique
-      document.getElementById('summary').innerText = buildSummary(summaries);  // Affiche le résumé
-    });
-
-    // Étape 5: Analyse de concordance globale (Kendall W)
+      
+      // Étape 4: Analyse de concordance globale (Kendall W)
     if (selected.length >= 2) {
       const ranksMatrix = selected.map(s => scoresToRanks(s.values.map(v => parseFloat(v))));
       const kendall = computeKendallW(ranksMatrix);
@@ -540,7 +535,14 @@
         `W = ${kendall.W} • χ² = ${kendall.chi2} (ddl=${kendall.ddl}) • p ${kendall.p}\n` +
         `→ ${kendall.interpretation}`;
       document.getElementById('summary').innerText += concordanceText;
-    };
+    }
+      // Étape 5: Visualisation et rapport
+      renderChart(datasets, labelsForDatasets);           // Crée le graphique
+      
+      document.getElementById('summary').innerText = buildSummary(summaries);  // Affiche le résumé
+    });
+
+    
 
     // =================================================================================
     // FONCTIONS UTILITAIRES ET GESTION DE L'ÉTAT
