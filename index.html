@@ -826,13 +826,8 @@
 
             if (error) throw error;
 
-            const successMessage = `✅ Session sauvegardée avec succès!\n\n` +
-                                `📋 Nom: ${sessionName}\n` +
-                                `🔑 Mot de passe: ${password}\n` +
-                                `📊 Échelles: ${scales.length}\n\n` +
-                                `💡 Notez ce mot de passe pour récupérer la session plus tard.`;
-
-            alert(successMessage);
+            // Créer une interface personnalisée pour le succès
+            showSuccessDialog(sessionName, password, scales.length);
             console.log('Session sauvegardée:', data.id);
 
         } catch (error) {
@@ -1131,6 +1126,185 @@
             console.error('Erreur lors de la liste des sessions:', error);
             alert(`❌ Erreur lors de la récupération des sessions: ${error.message}`);
         }
+    }
+
+    // Afficher le dialogue de succès personnalisé
+    function showSuccessDialog(sessionName, password, scalesCount) {
+        // Créer la fenêtre modale
+        const modal = document.createElement('div');
+        modal.id = 'successModal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            font-family: Arial, sans-serif;
+        `;
+
+        // Créer le contenu de la fenêtre
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = `
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            text-align: center;
+        `;
+
+        // Icône de succès
+        const icon = document.createElement('div');
+        icon.textContent = '✅';
+        icon.style.cssText = `
+            font-size: 4em;
+            margin-bottom: 20px;
+        `;
+
+        // Titre
+        const title = document.createElement('h2');
+        title.textContent = 'Session sauvegardée avec succès!';
+        title.style.cssText = `
+            margin: 0 0 20px 0;
+            color: #28a745;
+            font-size: 1.5em;
+        `;
+
+        // Informations de la session
+        const info = document.createElement('div');
+        info.style.cssText = `
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: left;
+            border-left: 4px solid #28a745;
+        `;
+
+        info.innerHTML = `
+            <div style="margin-bottom: 10px;">
+                <strong>📋 Nom:</strong> <span style="color: #495057;">${sessionName}</span>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <strong>🔑 Mot de passe:</strong>
+                <span style="color: #495057; font-family: monospace; font-size: 1.1em;">${password}</span>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <strong>📊 Échelles:</strong> <span style="color: #495057;">${scalesCount}</span>
+            </div>
+        `;
+
+        // Bouton copier le mot de passe
+        const copyButton = document.createElement('button');
+        copyButton.textContent = '📋 Copier le mot de passe';
+        copyButton.style.cssText = `
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            margin: 10px;
+            transition: transform 0.2s ease;
+        `;
+
+        copyButton.onmouseover = () => {
+            copyButton.style.transform = 'translateY(-2px)';
+        };
+
+        copyButton.onmouseout = () => {
+            copyButton.style.transform = 'translateY(0)';
+        };
+
+        copyButton.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(password);
+                copyButton.textContent = '✅ Copié!';
+                copyButton.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+                setTimeout(() => {
+                    copyButton.textContent = '📋 Copier le mot de passe';
+                    copyButton.style.background = 'linear-gradient(135deg, #007bff 0%, #0056b3 100%)';
+                }, 2000);
+            } catch (err) {
+                // Fallback pour les navigateurs qui ne supportent pas clipboard API
+                const textArea = document.createElement('textarea');
+                textArea.value = password;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+
+                copyButton.textContent = '✅ Copié!';
+                copyButton.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+                setTimeout(() => {
+                    copyButton.textContent = '📋 Copier le mot de passe';
+                    copyButton.style.background = 'linear-gradient(135deg, #007bff 0%, #0056b3 100%)';
+                }, 2000);
+            }
+        };
+
+        // Bouton OK
+        const okButton = document.createElement('button');
+        okButton.textContent = 'OK';
+        okButton.style.cssText = `
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            margin: 10px;
+        `;
+
+        okButton.onclick = () => {
+            document.body.removeChild(modal);
+        };
+
+        // Conteneur des boutons
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 25px;
+            flex-wrap: wrap;
+        `;
+        buttonContainer.appendChild(copyButton);
+        buttonContainer.appendChild(okButton);
+
+        // Message d'aide
+        const helpText = document.createElement('div');
+        helpText.innerHTML = `
+            <div style="margin-top: 20px; font-size: 0.9em; color: #6c757d;">
+                💡 <strong>Notez ce mot de passe</strong> pour récupérer la session plus tard.
+            </div>
+        `;
+
+        // Assembler la fenêtre
+        modalContent.appendChild(icon);
+        modalContent.appendChild(title);
+        modalContent.appendChild(info);
+        modalContent.appendChild(helpText);
+        modalContent.appendChild(buttonContainer);
+        modal.appendChild(modalContent);
+        document.body.appendChild(modal);
+
+        // Fermer en cliquant en dehors
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        };
     }
 
     // Event listeners pour les boutons de sauvegarde/chargement
