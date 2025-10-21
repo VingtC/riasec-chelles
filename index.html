@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>Comparateur RIASEC — Prediger (Objets/Personnes & Faits/Idées)</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 18px; color:#222; }
     header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
@@ -26,6 +27,8 @@
     .btn-primary { background:#2b6cb0; color:white; }
     .btn-ghost { background:#fff; border:1px solid #ccc; color:#222; }
     .btn-danger { background:#d9534f; color:white; }
+    .btn-success { background:#28a745; color:white; }
+    .btn-info { background:#17a2b8; color:white; }
     #chart-wrap { max-width:920px; margin:18px auto; }
     #riasecChart { width:100% !important; height:520px !important; display:block; }
     #summary { text-align:left; margin-top:12px; font-weight:400; white-space:pre-wrap; line-height:1.4; font-size:0.95rem; }
@@ -47,6 +50,10 @@
       <button id="addScaleBtn" class="btn btn-primary">+ Ajouter une échelle</button>
       <button id="plotBtn" class="btn btn-primary">Afficher le graphique</button>
       <button id="resetBtn" class="btn btn-ghost">Réinitialiser</button>
+    </div>
+    <div class="controls">
+      <button id="saveBtn" class="btn btn-success">💾 Sauvegarder la session</button>
+      <button id="loadBtn" class="btn btn-info">📂 Charger une session</button>
     </div>
   </header>
 
@@ -739,6 +746,396 @@
       }
       return true;
     }
+
+    // =================================================================================
+    // FONCTIONS DE SAUVEGARDE ET DE RÉCUPÉRATION RIASEC
+    // =================================================================================
+
+    // Configuration Supabase (à remplacer par vos vraies clés)
+    const SUPABASE_CONFIG = {
+        url: 'https://oefhvkvvvikccrpgpsjk.supabase.co',
+        anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9lZmh2a3Z2dmlrY2NycGdwc2prIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2MDExODcsImV4cCI6MjA3NjE3NzE4N30.quWFAnfQoBeYo0sHG6dXYps1UzbyGA-3LkMk0sR0d8Q'
+    };
+
+    let supabaseClient = null;
+
+    function initializeSupabase() {
+        if (typeof supabase === 'undefined') {
+            console.error('Supabase library not loaded. Please include the Supabase CDN script.');
+            return false;
+        }
+
+        try {
+            supabaseClient = supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+            console.log('Supabase client initialized successfully');
+            return true;
+        } catch (error) {
+            console.error('Error initializing Supabase:', error);
+            return false;
+        }
+    }
+
+    function generateUniquePassword() {
+        const timestamp = Date.now().toString(36);
+        const randomStr = Math.random().toString(36).substring(2, 8);
+        return (timestamp + randomStr).toUpperCase();
+    }
+
+    // Sauvegarder la session actuelle
+    async function saveCurrentSession() {
+        if (scales.length === 0) {
+            alert('Aucune échelle à sauvegarder.');
+            return;
+        }
+
+        const sessionName = prompt('Nom de cette session RIASEC :', `Session RIASEC ${new Date().toLocaleDateString('fr-FR')}`);
+        if (!sessionName) return;
+
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const password = generateUniquePassword();
+            const sessionData = {
+                name: sessionName,
+                scales: scales.map(s => ({
+                    name: s.name,
+                    max: s.max,
+                    values: s.values,
+                    selected: s.selected
+                })),
+                scales_count: scales.length,
+                selected_scales_count: scales.filter(s => s.selected).length,
+                created_at: new Date().toISOString()
+            };
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .insert([{
+                    name: sessionName,
+                    password: password,
+                    scales_data: sessionData,
+                    scales_count: scales.length,
+                    selected_scales_count: scales.filter(s => s.selected).length,
+                    created_at: new Date().toISOString(),
+                    version: '1.0'
+                }])
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            const successMessage = `✅ Session sauvegardée avec succès!\n\n` +
+                                `📋 Nom: ${sessionName}\n` +
+                                `🔑 Mot de passe: ${password}\n` +
+                                `📊 Échelles: ${scales.length}\n\n` +
+                                `💡 Notez ce mot de passe pour récupérer la session plus tard.`;
+
+            alert(successMessage);
+            console.log('Session sauvegardée:', data.id);
+
+        } catch (error) {
+            console.error('Erreur lors de la sauvegarde:', error);
+            alert(`❌ Erreur lors de la sauvegarde: ${error.message}\n\nVérifiez votre configuration Supabase dans le code.`);
+        }
+    }
+
+    // Récupérer une session par mot de passe (ou mode admin avec 'coP1')
+    async function loadSessionFromPassword() {
+        const password = prompt('Entrez le mot de passe de la session:');
+        if (!password || password.length < 2) {
+            alert('Le mot de passe doit contenir au moins 2 caractères.');
+            return;
+        }
+
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            // Mode administrateur avec le mot de passe 'coP1'
+            if (password.toLowerCase() === 'cop1') {
+                await loadAdminMode();
+                return;
+            }
+
+            // Mode normal : récupération par mot de passe unique
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('*')
+                .eq('password', password)
+                .single();
+
+            if (error) {
+                if (error.code === 'PGRST116') {
+                    alert('Aucune session trouvée avec ce mot de passe.');
+                } else {
+                    throw error;
+                }
+                return;
+            }
+
+            // Restaurer les échelles depuis les données sauvegardées
+            restoreSession(data);
+
+        } catch (error) {
+            console.error('Erreur lors de la récupération:', error);
+            alert(`❌ Erreur lors de la récupération: ${error.message}`);
+        }
+    }
+
+    // Restaurer une session depuis les données sauvegardées
+    function restoreSession(sessionData) {
+        try {
+            // Vider les échelles actuelles
+            scales = [];
+            scaleIdCounter = 0;
+            document.getElementById('scalesContainer').innerHTML = '';
+            document.getElementById('summary').innerHTML = '';
+
+            if (window.myChart) {
+                window.myChart.destroy();
+                window.myChart = null;
+            }
+
+            // Recréer les échelles depuis les données sauvegardées
+            if (sessionData.scales_data && sessionData.scales_data.scales) {
+                sessionData.scales_data.scales.forEach(scaleData => {
+                    addScale(scaleData.name, scaleData.max, scaleData.values);
+                    const newScale = scales[scales.length - 1];
+                    newScale.selected = scaleData.selected;
+                    const checkbox = document.getElementById(`select-${newScale.id}`);
+                    if (checkbox) checkbox.checked = scaleData.selected;
+                });
+            }
+
+            alert(`✅ Session "${sessionData.name}" restaurée avec succès!\n` +
+                  `📅 Créée le: ${new Date(sessionData.created_at).toLocaleDateString('fr-FR')}\n` +
+                  `📊 Échelles: ${sessionData.scales_count}`);
+
+        } catch (error) {
+            console.error('Erreur lors de la restauration:', error);
+            alert(`❌ Erreur lors de la restauration: ${error.message}`);
+        }
+    }
+
+    // Mode administrateur : interface graphique pour choisir les sessions
+    async function loadAdminMode() {
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            if (data.length === 0) {
+                alert('🔐 MODE ADMINISTRATEUR\n\nAucune session trouvée dans la base de données.');
+                return;
+            }
+
+            // Créer une interface graphique pour sélectionner les sessions
+            await showAdminSessionSelector(data);
+
+        } catch (error) {
+            console.error('Erreur en mode administrateur:', error);
+            alert(`❌ Erreur en mode administrateur: ${error.message}`);
+        }
+    }
+
+    // Afficher l'interface graphique de sélection des sessions
+    async function showAdminSessionSelector(sessions) {
+        return new Promise((resolve) => {
+            // Créer la fenêtre modale
+            const modal = document.createElement('div');
+            modal.id = 'adminModal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10000;
+                font-family: Arial, sans-serif;
+            `;
+
+            // Créer le contenu de la fenêtre
+            const modalContent = document.createElement('div');
+            modalContent.style.cssText = `
+                background: white;
+                border-radius: 15px;
+                padding: 25px;
+                max-width: 90%;
+                max-height: 80%;
+                overflow-y: auto;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            `;
+
+            // En-tête
+            const header = document.createElement('h2');
+            header.textContent = '🔐 MODE ADMINISTRATEUR - Sélectionnez une session';
+            header.style.cssText = `
+                margin: 0 0 20px 0;
+                color: #2c3e50;
+                text-align: center;
+                border-bottom: 2px solid #667eea;
+                padding-bottom: 15px;
+            `;
+
+            // Liste des sessions
+            const sessionsList = document.createElement('div');
+            sessionsList.style.cssText = `
+                display: grid;
+                gap: 15px;
+                margin-bottom: 20px;
+            `;
+
+            // Créer un bouton pour chaque session
+            sessions.forEach((session, index) => {
+                const sessionButton = document.createElement('button');
+                sessionButton.className = 'session-button';
+
+                const date = new Date(session.created_at).toLocaleDateString('fr-FR');
+                const time = new Date(session.created_at).toLocaleTimeString('fr-FR');
+
+                sessionButton.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <div style="text-align: left;">
+                            <div style="font-weight: bold; font-size: 1.1em; color: #2c3e50;">${session.name}</div>
+                            <div style="font-size: 0.9em; color: #6c757d; margin-top: 5px;">
+                                📅 ${date} ${time} | 📊 ${session.scales_count} échelles
+                            </div>
+                            <div style="font-size: 0.8em; color: #888; margin-top: 3px; font-family: monospace;">
+                                🔑 ${session.password}
+                            </div>
+                        </div>
+                        <div style="font-weight: bold; color: #667eea; font-size: 1.2em;">
+                            #${index + 1}
+                        </div>
+                    </div>
+                `;
+
+                sessionButton.style.cssText = `
+                    width: 100%;
+                    padding: 15px;
+                    border: 2px solid #e1e8ed;
+                    border-radius: 10px;
+                    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+                    cursor: pointer;
+                    text-align: left;
+                    transition: all 0.3s ease;
+                    font-size: 0.9em;
+                `;
+
+                sessionButton.onmouseover = () => {
+                    sessionButton.style.borderColor = '#667eea';
+                    sessionButton.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                    sessionButton.style.color = 'white';
+                    sessionButton.querySelector('div').style.color = 'white';
+                };
+
+                sessionButton.onmouseout = () => {
+                    sessionButton.style.borderColor = '#e1e8ed';
+                    sessionButton.style.background = 'linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%)';
+                    sessionButton.style.color = 'inherit';
+                    sessionButton.querySelector('div').style.color = '';
+                };
+
+                sessionButton.onclick = () => {
+                    document.body.removeChild(modal);
+                    console.log('Session sélectionnée:', session);
+                    restoreSession(session);
+                    resolve();
+                };
+
+                sessionsList.appendChild(sessionButton);
+            });
+
+            // Bouton annuler
+            const cancelButton = document.createElement('button');
+            cancelButton.textContent = '❌ Annuler';
+            cancelButton.style.cssText = `
+                background: #dc3545;
+                color: white;
+                border: none;
+                padding: 12px 25px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 1em;
+                font-weight: bold;
+                width: 100%;
+                margin-top: 15px;
+            `;
+
+            cancelButton.onclick = () => {
+                document.body.removeChild(modal);
+                resolve();
+            };
+
+            // Assembler la fenêtre
+            modalContent.appendChild(header);
+            modalContent.appendChild(sessionsList);
+            modalContent.appendChild(cancelButton);
+            modal.appendChild(modalContent);
+            document.body.appendChild(modal);
+
+            // Fermer en cliquant en dehors
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                    resolve();
+                }
+            };
+        });
+    }
+
+    // Lister les sessions disponibles (pour sélection)
+    async function listAvailableSessions() {
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('id, name, created_at, scales_count, selected_scales_count')
+                .order('created_at', { ascending: false })
+                .limit(10);
+
+            if (error) throw error;
+
+            if (data.length === 0) {
+                alert('Aucune session trouvée dans la base de données.');
+                return;
+            }
+
+            // Créer une liste des sessions disponibles
+            const sessionList = data.map((session, index) =>
+                `${index + 1}. ${session.name}\n` +
+                `   Créée le: ${new Date(session.created_at).toLocaleDateString('fr-FR')}\n` +
+                `   Échelles: ${session.scales_count}`
+            ).join('\n\n');
+
+            alert(`📋 Sessions disponibles:\n\n${sessionList}\n\n💡 Utilisez le mot de passe unique pour charger une session spécifique.`);
+
+        } catch (error) {
+            console.error('Erreur lors de la liste des sessions:', error);
+            alert(`❌ Erreur lors de la récupération des sessions: ${error.message}`);
+        }
+    }
+
+    // Event listeners pour les boutons de sauvegarde/chargement
+    document.getElementById('saveBtn').addEventListener('click', saveCurrentSession);
+    document.getElementById('loadBtn').addEventListener('click', loadSessionFromPassword);
   </script>
 </body>
 </html>
