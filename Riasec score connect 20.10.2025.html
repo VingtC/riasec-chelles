@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Comparateur RIASEC — Prediger (Objets/Personnes & Faits/Idées)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; color:#222; }
+    header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+    h1 { font-size:1.2rem; margin:0; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .scales { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+    .scale {
+      border:1px solid #ddd; padding:10px; border-radius:8px; background:#fafafa;
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    .scale h4 { margin:0 8px 0 0; font-size:0.95rem; }
+    label { font-size:0.9rem; }
+    input[type="text"], input[type="number"] {
+      padding:6px 8px; border:1px solid #ccc; border-radius:6px; font-size:0.9rem;
+    }
+    .scores { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .scores input { width:70px; }
+    .invalid { border-color:#d93025; background:#ffecec; }
+    .btn { padding:8px 12px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+    .btn-primary { background:#2b6cb0; color:white; }
+    .btn-ghost { background:#fff; border:1px solid #ccc; color:#222; }
+    .btn-danger { background:#d9534f; color:white; }
+    .btn-success { background:#28a745; color:white; }
+    .btn-info { background:#17a2b8; color:white; }
+    #chart-wrap { max-width:920px; margin:18px auto; }
+    #riasecChart { width:100% !important; height:520px !important; display:block; }
+    #summary { text-align:left; margin-top:12px; font-weight:400; white-space:pre-wrap; line-height:1.4; font-size:0.95rem; }
+    .small { font-weight:400; font-size:0.9rem; color:#444; margin-top:6px; }
+    .note { font-size:0.9rem; color:#333; margin-top:8px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .prediger { font-size:0.9rem; color:#333; margin-top:8px;}
+    @media (max-width:520px) {
+      .scores input { width:56px; }
+      input[type="text"], input[type="number"] { width:100%; }
+      .scale { flex-direction:column; align-items:stretch; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Comparateur RIASEC — multi-échelles + Prediger</h1>
+    <div class="controls">
+      <button id="addScaleBtn" class="btn btn-primary">+ Ajouter une échelle</button>
+      <button id="plotBtn" class="btn btn-primary">Afficher le graphique</button>
+      <button id="resetBtn" class="btn btn-ghost">Réinitialiser</button>
+    </div>
+    <div class="controls">
+      <button id="saveBtn" class="btn btn-success">💾 Sauvegarder la session</button>
+      <button id="loadBtn" class="btn btn-info">📂 Charger une session</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="small">Ajoute des échelles, renseigne nom, étendue et scores R,I,A,S,E,C. Coche un ou plusieurs éléments pour les afficher. Pour la lisibilité, éviter d'afficher trop de courbes simultanément.</div>
+
+    <div id="scalesContainer" class="scales"></div>
+
+    <div id="chart-wrap">
+      <canvas id="riasecChart"></canvas>
+      <div id="summary" aria-live="polite"></div>
+
+      <ul class="note" id="footnote">
+        <strong>La différentiation </strong>est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltrame <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a>
+      </ul>
+
+      <div class="note" id="diff-interpretation">
+        <strong>Interprétation de la différenciation</strong> : un indice de différenciation étalonné en classe IV indique un profil RIASEC moyennement différencié ; en classe I, II ou III le profil est faiblement différencié ; en classe V, VI ou VII le profil est fortement différencié.
+      </div>
+
+      <div class="prediger" id="prediger-note">
+        Les <strong>dimensions de Prediger</strong> (calculées avec la méthode de <a href="https://www.researchgate.net/publication/232418263_Adherence_to_RIASEC_Structure_as_a_Key_Career_Decision_Construct" target="_blank">Tracey</a>) sont : <em>Objets vs Personnes</em> et <em>Faits vs Idées</em>.
+      </div>
+
+      <div class="note" id="kendall-note">
+        <strong>Analyse de concordance (Kendall W)</strong> : Le coefficient W mesure l'accord entre plusieurs échelles RIASEC sur le classement des types. W varie de 0 (aucune concordance) à 1 (concordance parfaite). Le test de significativité indique si l'accord observé est statistiquement fiable.
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // =================================================================================
+    // CONSTANTES ET VARIABLES GLOBALES
+    // =================================================================================
+    // Labels RIASEC dans l'ordre standard
+    const LABELS = ['R','I','A','S','E','C'];
+    // Compteur pour générer des IDs uniques pour chaque échelle
+    let scaleIdCounter = 0;
+    // Stockage de toutes les échelles créées
+    // Structure: {id, name, max, values:[6], selected}
+    let scales = [];
+
+    // =================================================================================
+    // PALETTE DE COULEURS POUR LES GRAPHES
+    // =================================================================================
+    // Palette de 8 couleurs distinctes pour différencier les échelles sur le graphique
+    const BASE_COLORS = [
+      'rgba(220,53,69,1)',    // Rouge
+      'rgba(13,110,253,1)',   // Bleu
+      'rgba(40,167,69,1)',    // Vert
+      'rgba(255,193,7,1)',    // Jaune
+      'rgba(102,16,242,1)',   // Violet
+      'rgba(23,162,184,1)',   // Cyan
+      'rgba(255,87,34,1)',    // Orange
+      'rgba(0,123,255,1)'     // Bleu secondaire
+    ];
+
+    // =================================================================================
+    // GESTION DES COULEURS POUR LES GRAPHES
+    // =================================================================================
+    /**
+     * Génère une paire de couleurs (bordure + fond) pour une échelle donnée
+     * @param {number} i - Index de l'échelle (0, 1, 2, etc.)
+     * @returns {object} Objet avec border (opaque) et background (translucide)
+     */
+    function colorForIndex(i) {
+      // Sélectionne une couleur de base en bouclant sur la palette
+      const base = BASE_COLORS[i % BASE_COLORS.length];
+      // Crée une version translucide pour le fond (remplace opacity 1 par 0.18)
+      const bg = base.replace(/1\)$/, '0.18)');
+      return { border: base, background: bg };
+    }
+
+    // =================================================================================
+    // INITIALISATION DE L'APPLICATION
+    // =================================================================================
+    /**
+     * Événement déclenché quand le DOM est complètement chargé
+     * Crée automatiquement deux échelles d'exemple au démarrage
+     */
+    window.addEventListener('DOMContentLoaded', () => {
+      // Ajoute une échelle d'autoévaluation (notation 1-5)
+      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      // Ajoute une échelle de test en ligne (notation 0-100)
+      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+    });
+
+    // =================================================================================
+    // GESTION DES ÉCHELLES RIASEC
+    // =================================================================================
+    /**
+     * Crée une nouvelle échelle RIASEC avec ses contrôles HTML associés
+     * @param {string} name - Nom de l'échelle (ex: "Autoévaluation", "Test professionnel")
+     * @param {number} max - Valeur maximale possible (ex: 5 pour une échelle 1-5, 100 pour un test)
+     * @param {number[]} values - Scores RIASEC [R, I, A, S, E, C]
+     */
+    function addScale(name='Échelle', max=5, values=[0,0,0,0,0,0]) {
+      const id = ++scaleIdCounter;
+      const s = { id, name, max, values: values.slice(), selected: false };
+      scales.push(s);
+
+      const container = document.getElementById('scalesContainer');
+      const el = document.createElement('div');
+      el.className = 'scale';
+      el.id = `scale-${id}`;
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="select-${id}" aria-label="Sélection ${id}">
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div class="row">
+            <h4>Échelle</h4>
+            <input type="text" id="name-${id}" value="${escapeHtml(name)}" style="min-width:160px;">
+            <label>Étendue max</label>
+            <input type="number" id="max-${id}" value="${max}" min="1" step="any" style="width:85px;">
+            <button class="btn btn-danger" id="del-${id}" title="Supprimer">Suppr</button>
+          </div>
+          <div class="scores" id="scores-${id}">
+            ${LABELS.map((L,i)=>`<label>${L}: <input type="number" id="val-${id}-${L}" value="${values[i]}" step="any"></label>`).join('')}
+          </div>
+        </div>
+      `;
+      container.appendChild(el);
+
+      document.getElementById(`del-${id}`).addEventListener('click', ()=> removeScale(id));
+      document.getElementById(`select-${id}`).addEventListener('change', (e)=> toggleSelect(id, e.target.checked));
+      document.getElementById(`name-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'name', e.target.value));
+      document.getElementById(`max-${id}`).addEventListener('input', (e)=> updateScaleMeta(id,'max', parseFloat(e.target.value)));
+      LABELS.forEach(L => {
+        document.getElementById(`val-${id}-${L}`).addEventListener('input', (e)=> updateScaleValue(id, L, e.target.value));
+      });
+    }
+
+    function removeScale(id) {
+      scales = scales.filter(s=>s.id!==id);
+      const el = document.getElementById(`scale-${id}`); if (el) el.remove();
+      updateEmptyIfNeeded();
+    }
+
+    function updateScaleMeta(id, prop, val) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      if (prop === 'max') s.max = (isNaN(val) || val <= 0) ? 1 : val;
+      else s.name = String(val || '');
+    }
+
+    function updateScaleValue(id, label, raw) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      const idx = LABELS.indexOf(label);
+      const v = parseFloat(raw);
+      s.values[idx] = raw === '' ? '' : (isNaN(v) ? '' : v);
+      const input = document.getElementById(`val-${id}-${label}`);
+      if (raw === '' || isNaN(v) || v < 0 || v > s.max) input.classList.add('invalid');
+      else input.classList.remove('invalid');
+    }
+
+    function toggleSelect(id, checked) {
+      const s = scales.find(x=>x.id===id); if (!s) return;
+      s.selected = checked;
+    }
+
+    document.getElementById('addScaleBtn').addEventListener('click', ()=> {
+      addScale('Nouvelle échelle', 5, [0,0,0,0,0,0]);
+      const last = document.getElementById(`scale-${scaleIdCounter}`);
+      if (last) last.scrollIntoView({ behavior:'smooth', block:'center' });
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', ()=> {
+      scales = []; scaleIdCounter = 0;
+      document.getElementById('scalesContainer').innerHTML = '';
+      document.getElementById('summary').innerHTML = '';
+      if (window.myChart) { window.myChart.destroy(); window.myChart = null; }
+      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+    });
+
+    function validateScale(s) {
+      for (let i=0;i<6;i++) {
+        const raw = s.values[i];
+        const v = parseFloat(raw);
+        if (raw === '' || isNaN(v) || v < 0 || v > s.max) return false;
+      }
+      return true;
+    }
+
+    // =================================================================================
+    // FONCTIONS DE CALCUL ET DE NORMALISATION
+    // =================================================================================
+
+    /**
+     * Calcule le coefficient de concordance de Kendall (W)
+     * Mesure l'accord entre plusieurs échelles sur les scores RIASEC
+     * @param {object[]} scales - Tableau d'échelles sélectionnées avec scores valides
+     * @returns {object} Objet contenant W, chi2, df, p-value et interprétation
+     */
+    function computeKendallW(scales) {
+      if (scales.length < 2) {
+        return { W: null, chi2: null, df: null, p: null, interpretation: "Besoin d'au moins 2 échelles pour calculer la concordance" };
+      }
+
+      const n = scales.length; // nombre d'échelles (juges)
+      const m = 6; // nombre de types RIASEC (éléments à évaluer)
+
+      // Convertit les scores en rangs pour chaque échelle
+      const ranks = scales.map(scale => {
+        // Pour chaque échelle, classe les scores RIASEC par ordre décroissant
+        const scores = scale.values.map(v => parseFloat(v));
+        const sortedIndices = scores.map((score, index) => ({ score, index }))
+                                  .sort((a, b) => b.score - a.score)
+                                  .map(item => item.index);
+
+        // Attribue les rangs (1 = plus haut score, 6 = plus bas score)
+        const rank = new Array(6).fill(0);
+        sortedIndices.forEach((idx, position) => {
+          rank[idx] = position + 1; // rang de 1 à 6
+        });
+
+        return rank;
+      });
+
+      // Calcule la somme des rangs pour chaque type RIASEC
+      const sumRanks = new Array(m).fill(0);
+      for (let j = 0; j < m; j++) {
+        for (let i = 0; i < n; i++) {
+          sumRanks[j] += ranks[i][j];
+        }
+      }
+
+      // Calcule la moyenne des rangs
+      const meanRank = sumRanks.reduce((sum, r) => sum + r, 0) / m;
+
+      // Calcule la somme des carrés des écarts à la moyenne
+      let sumSquaredDeviations = 0;
+      for (let j = 0; j < m; j++) {
+        const deviation = sumRanks[j] - meanRank;
+        sumSquaredDeviations += deviation * deviation;
+      }
+
+      // Calcule le coefficient W
+      const numerator = 12 * sumSquaredDeviations;
+      const denominator = n * n * (m * m * m - m);
+      const W = numerator / denominator;
+
+      // Test de significativité (Khi-deux)
+      const chi2 = (n * (m - 1) * W);
+      const df = m - 1;
+
+      // Calcule le p-value approximatif
+      let p = null;
+      if (chi2 > 0 && df > 0) {
+        // Approximation du khi-deux avec df degrés de liberté
+        p = chiSquarePValue(chi2, df);
+      }
+
+      // Interprétation du résultat
+      let interpretation = "";
+      if (W === null) {
+        interpretation = "Impossible de calculer le coefficient";
+      } else if (W < 0.1) {
+        interpretation = "Concordance très faible - Les échelles divergent considérablement";
+      } else if (W < 0.3) {
+        interpretation = "Concordance faible - Divergences notables entre les échelles";
+      } else if (W < 0.5) {
+        interpretation = "Concordance modérée - Accord partiel entre les échelles";
+      } else if (W < 0.7) {
+        interpretation = "Bonne concordance - Accord satisfaisant entre les échelles";
+      } else if (W < 0.9) {
+        interpretation = "Forte concordance - Très bon accord entre les échelles";
+      } else {
+        interpretation = "Concordance excellente - Accord quasi parfait entre les échelles";
+      }
+
+      // Ajoute l'interprétation de la significativité
+      if (p !== null) {
+        if (p < 0.001) {
+          interpretation += `\nLa concordance est hautement significative (p < 0.001)`;
+        } else if (p < 0.01) {
+          interpretation += `\nLa concordance est très significative (p < 0.01)`;
+        } else if (p < 0.05) {
+          interpretation += `\nLa concordance est significative (p < 0.05)`;
+        } else {
+          interpretation += `\nLa concordance n'est pas significative (p = ${p.toFixed(3)})`;
+        }
+      }
+
+      return {
+        W: Math.round(W * 1000) / 1000, // arrondi à 3 décimales
+        chi2: Math.round(chi2 * 100) / 100,
+        df: df,
+        p: p,
+        interpretation: interpretation
+      };
+    }
+
+    /**
+     * Calcule approximativement la p-value pour un test du khi-deux
+     * @param {number} chi2 - Valeur du khi-deux
+     * @param {number} df - Degrés de liberté
+     * @returns {number} p-value approximative
+     */
+    function chiSquarePValue(chi2, df) {
+      // Approximation grossière pour les besoins de cette application
+      // Dans un contexte réel, utiliser une bibliothèque statistique
+
+      // Table de valeurs critiques approximatives pour différents df
+      const criticalValues = {
+        1: [3.84, 6.63, 10.83],    // p=0.05, 0.01, 0.001
+        2: [5.99, 9.21, 13.82],
+        3: [7.81, 11.34, 16.27],
+        4: [9.49, 13.28, 18.47],
+        5: [11.07, 15.09, 20.52],
+        6: [12.59, 16.81, 22.46],
+        7: [14.07, 18.48, 24.32],
+        8: [15.51, 20.09, 26.12],
+        9: [16.92, 21.67, 27.88],
+        10: [18.31, 23.21, 29.59]
+      };
+
+      const crit = criticalValues[df] || criticalValues[10];
+
+      if (chi2 < crit[0]) return Math.max(0.05, 0.5 / Math.pow(chi2 + 1, 0.5));
+      if (chi2 < crit[1]) return Math.max(0.01, 0.05 / Math.pow(chi2 + 1, 0.3));
+      if (chi2 < crit[2]) return Math.max(0.001, 0.01 / Math.pow(chi2 + 1, 0.2));
+      return 0.001; // Très significative
+    }
+    /**
+     * Normalise une valeur pour l'affichage sur le graphique radar (échelle 0-5)
+     * @param {number} value - Valeur brute à normaliser
+     * @param {number} max - Valeur maximale possible pour cette échelle
+     * @returns {number} Valeur normalisée entre 0 et 5
+     */
+    function normalizeForChart(value, max) {
+      if (max <= 0) return 0;
+      // Formule: (valeur / max) * 5, arrondi à 1 décimale
+      return Math.round((value / max) * 5 * 10) / 10;
+    }
+
+    /**
+     * Convertit une valeur en pourcentage (0-100%)
+     * @param {number} value - Valeur à convertir
+     * @param {number} max - Valeur maximale de référence
+     * @returns {number} Pourcentage arrondi
+     */
+    function toPercent100(value, max) {
+      if (max <= 0) return 0;
+      return (value / max) * 100;
+    }
+
+    /**
+     * Identifie les deux types RIASEC dominants dans un profil
+     * @param {number[]} scores - Scores RIASEC normalisés [R, I, A, S, E, C]
+     * @returns {string[]} Les deux types principaux triés par score décroissant
+     */
+    function getTopTwoTypes(scores) {
+      // Associe chaque type à son score
+      const paired = LABELS.map((lab,i)=>({ type:lab, score:scores[i] }));
+      // Trie par score décroissant
+      paired.sort((a,b)=> b.score - a.score);
+      return [paired[0].type, paired[1].type];
+    }
+
+    // =================================================================================
+    // ANALYSE DE LA CONSISTANCE ENTRE TYPES RIASEC
+    // =================================================================================
+    /**
+     * Évalue la cohérence entre les deux types RIASEC dominants
+     * Utilise la structure hexagonale RIASEC pour mesurer la proximité
+     * @param {string} type1 - Premier type dominant (ex: "R", "I", "A", etc.)
+     * @param {string} type2 - Deuxième type dominant
+     * @returns {string} Niveau de consistance: "Forte", "Moyenne" ou "Faible"
+     */
+    function evaluateConsistance(type1, type2) {
+      // Structure hexagonale RIASEC dans l'ordre
+      const hex = ['R','I','A','S','E','C'];
+      // Trouve les positions des deux types dans l'hexagone
+      const i1 = hex.indexOf(type1), i2 = hex.indexOf(type2);
+      // Calcule la distance la plus courte (min entre sens horaire et anti-horaire)
+      const d = Math.min(Math.abs(i1-i2), 6 - Math.abs(i1-i2));
+      // Interprétation selon la proximité:
+      if (d === 1) return 'Forte';      // Types adjacents (R-I, I-A, etc.)
+      if (d === 2) return 'Moyenne';    // Types espacés d'un intervalle
+      return 'Faible';                  // Types opposés ou très éloignés
+    }
+
+    // =================================================================================
+    // CALCUL DE L'INDICE DE DIFFÉRENTIATION RIASEC
+    // =================================================================================
+    /**
+     * Calcule l'indice de différentiation selon la méthode de Pr Vignaud
+     * Formule: D = (t1 - (t2 + t3)/2) + (t3 - (t4 + t5)/2)
+     * où t1 à t5 sont les 5 premiers scores triés par ordre décroissant
+     * @param {number[]} values - Scores RIASEC bruts [R, I, A, S, E, C]
+     * @param {number} max - Valeur maximale possible pour cette échelle
+     * @returns {number} Indice D arrondi à 2 décimales (échelle 0-24 max)
+     */
+    function computeDifferentiationIndex_on100(values, max) {
+      // Convertit les scores selon l'étalonnage RIASEC (max 24, pas 100)
+      const normalized = values.map(v => (parseFloat(v) / max) * 24);
+      // Trie les scores normalisés par ordre décroissant
+      const s = normalized.slice().sort((a,b)=> b - a);
+      // Extrait les 5 premiers scores (avec valeur par défaut 0 si undefined)
+      const t1 = s[0] || 0, t2 = s[1] || 0, t3 = s[2] || 0, t4 = s[3] || 0, t5 = s[4] || 0;
+      // Applique la formule de différentiation
+      const D = (t1 - (t2 + t3)/2) + (t3 - (t4 + t5)/2);
+      return Math.round(D * 100) / 100;
+    }
+
+    // =================================================================================
+    // CLASSIFICATION DE LA DIFFÉRENTIATION PAR SEXE
+    // =================================================================================
+    /**
+     * Classe l'indice de différentiation selon les normes établies
+     * Utilise des barèmes différents pour hommes et femmes selon RIASEC Flash 2
+     * @param {number} D - Indice de différentiation calculé (échelle 0-24)
+     * @returns {object} Objet avec les classes pour homme et femme
+     */
+    function classifyDifferentiation(D) {
+      // Définition des classes avec intervalles spécifiques homme/femme (RIASEC Flash 2)
+      const classes = [
+        { name:'I', homme:[0,2], femme:[0,2] },
+        { name:'II', homme:[3,4], femme:[3,4] },
+        { name:'III', homme:[5,6], femme:[5,8] },
+        { name:'IV', homme:[7,8], femme:[9,10] },
+        { name:'V', homme:[9,12], femme:[11,13] },
+        { name:'VI', homme:[13,15], femme:[14,16] },
+        { name:'VII', homme:[16,24], femme:[17,24] }
+      ];
+
+      /**
+       * Trouve la classe correspondant à un indice D pour un sexe donné
+       * @param {number} D - Indice de différentiation
+       * @param {string} sex - 'homme' ou 'femme'
+       * @returns {string} Nom de la classe (I à VII)
+       */
+      const findClass = (D, sex) => {
+        for (let c of classes) {
+          const r = sex === 'homme' ? c.homme : c.femme;
+          if (D >= r[0] && D <= r[1]) return c.name;
+        }
+        return 'VII'; // Classe maximale par défaut
+      };
+      return { homme: findClass(D,'homme'), femme: findClass(D,'femme') };
+    }
+
+    /**
+     * Convertit une classe de différentiation en niveau interprétable
+     * @param {string} clsName - Nom de la classe (I, II, III, etc.)
+     * @returns {string} Niveau de différentiation: "Faible", "Moyenne" ou "Forte"
+     */
+    function differentiationLevelFromClass(clsName) {
+      if (['I','II','III'].includes(clsName)) return 'Faible';
+      if (clsName === 'IV') return 'Moyenne';
+      return 'Forte';
+    }
+
+    // =================================================================================
+    // CALCUL DES DIMENSIONS DE PREDIGER/TRACEY
+    // =================================================================================
+    /**
+     * Calcule les dimensions de Prediger selon la méthode de Tracey
+     * Ces dimensions orthogonales aux types RIASEC permettent une analyse complémentaire
+     * @param {number[]} values - Scores RIASEC bruts [R, I, A, S, E, C]
+     * @param {number} max - Valeur maximale possible pour cette échelle
+     * @returns {object} Objet avec things_people et ideas_data
+     *
+     * Formules:
+     * - Things/People = (2*R + I - A - 2*S - E + C)
+     * - Ideas/Data = (1.73*I + 1.73*A - 1.73*E - 1.73*C)
+     */
+    function computePredigerOn100(values, max) {
+      // Convertit les scores bruts en pourcentages
+      const pct = values.map(v => toPercent100(parseFloat(v), max));
+
+      // Mappe les valeurs selon l'ordre RIASEC standard
+      const R = pct[0] || 0, I = pct[1] || 0, A = pct[2] || 0,
+            S = pct[3] || 0, E = pct[4] || 0, C = pct[5] || 0;
+
+      // Applique les formules de Prediger/Tracey
+      const things_people = (2*R + I - A - 2*S - E + C);
+      const ideas_data = (1.73*I + 1.73*A - 1.73*E - 1.73*C);
+
+      // Retourne les valeurs arrondies à 2 décimales
+      return {
+        things_people: Math.round(things_people * 100) / 100,
+        ideas_data: Math.round(ideas_data * 100) / 100
+      };
+    }
+
+    // =================================================================================
+    // VISUALISATION GRAPHIQUE AVEC CHART.JS
+    // =================================================================================
+    /**
+     * Crée et affiche le graphique radar RIASEC avec plusieurs échelles
+     * @param {number[][]} datasets - Tableau de datasets (chaque dataset = [R,I,A,S,E,C] normalisés)
+     * @param {string[]} labelsForDatasets - Noms des échelles pour la légende
+     */
+    function renderChart(datasets, labelsForDatasets) {
+      // Prépare les données pour Chart.js
+      const data = {
+        // Labels des axes (types RIASEC)
+        labels: LABELS,
+        // Chaque échelle devient un dataset avec ses propres couleurs
+        datasets: datasets.map((d,i) => {
+          const col = colorForIndex(i);
+          return {
+            label: labelsForDatasets[i],
+            data: d,
+            borderColor: col.border,
+            backgroundColor: col.background,
+            pointBackgroundColor: col.border,
+            fill: true
+          };
+        })
+      };
+
+      // Configuration du graphique radar
+      const config = {
+        type: 'radar',
+        data,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              min:0,
+              max:5,
+              ticks:{ stepSize:1 },
+              pointLabels: { font: { size:12 } }
+            }
+          },
+          plugins: {
+            title: { display:true, text:'Profil RIASEC (normalisé 1–5)' },
+            legend: { position:'top', labels: { usePointStyle:true } }
+          }
+        }
+      };
+
+      // Récupère le canvas et crée/détruit le graphique
+      const ctx = document.getElementById('riasecChart');
+      if (window.myChart) window.myChart.destroy(); // Évite les conflits
+      window.myChart = new Chart(ctx, config);
+    }
+
+    // =================================================================================
+    // GÉNÉRATION DU RAPPORT D'ANALYSE
+    // =================================================================================
+    /**
+     * Génère un résumé détaillé de l'analyse RIASEC pour chaque échelle
+     * @param {object[]} entries - Tableau d'objets contenant les résultats d'analyse
+     * @returns {string} Rapport formaté avec tous les indicateurs
+     */
+    function buildSummary(entries) {
+      return entries.map((e,i) => {
+        // Convertit les classes en niveaux de différentiation lisibles
+        const diffLevelH = differentiationLevelFromClass(e.class.homme);
+        const diffLevelF = differentiationLevelFromClass(e.class.femme);
+
+        // Interprète les dimensions de Prediger
+        const things_label = e.pred.things_people > 0 ? '<strong>Objets</strong>' :
+                           (e.pred.things_people < 0 ? '<strong>Personnes</strong>' : '<strong>Neutre</strong>');
+        const ideas_label = e.pred.ideas_data > 0 ? '<strong>Idées</strong>' :
+                          (e.pred.ideas_data < 0 ? '<strong>Faits</strong>' : '<strong>Neutre</strong>');
+
+        // Formatage du résumé harmonisé pour une échelle
+        return `${i+1}. <strong>${e.name}</strong><br>` +
+               `   Types: <strong>${e.top[0]}${e.top[1]}</strong> → <strong>Consistance ${e.consistance}</strong><br>` +
+               `   Différentiation: <strong>${diffLevelH}</strong> (H) / <strong>${diffLevelF}</strong> (F) • D=${e.D}<br>` +
+               `   Prediger: ${things_label} / ${ideas_label}`;
+      }).join('<br><br>');
+    }
+
+    // =================================================================================
+    // TRAITEMENT PRINCIPAL - ANALYSE ET VISUALISATION
+    // =================================================================================
+    /**
+     * Gestionnaire d'événement pour le bouton "Afficher le graphique"
+     * Orchestre toute l'analyse RIASEC et la visualisation des résultats
+     */
+    document.getElementById('plotBtn').addEventListener('click', ()=> {
+      // Étape 1: Sélectionne les échelles cochées par l'utilisateur
+      const selected = scales.filter(s=>s.selected);
+      if (selected.length === 0) {
+        alert('Sélectionne au moins une échelle à afficher.');
+        return;
+      }
+
+      // Étape 2: Validation des données saisies
+      for (let s of selected) {
+        if (!validateScale(s)) {
+          // Met en surbrillance les champs invalides
+          LABELS.forEach((L,i)=> {
+            const input = document.getElementById(`val-${s.id}-${L}`);
+            const v = parseFloat(s.values[i]);
+            if (s.values[i] === '' || isNaN(v) || v < 0 || v > s.max) {
+              input.classList.add('invalid');
+            }
+          });
+          alert(`Échelle "${s.name}" contient des valeurs invalides. Corrige les champs en rouge.`);
+          return;
+        }
+      }
+
+      // Étape 3: Préparation des données pour l'analyse
+      const datasets = [], labelsForDatasets = [], summaries = [];
+
+      selected.forEach((s, idx) => {
+        // Normalise les scores pour le graphique (échelle 0-5)
+        const norm = s.values.map(v => normalizeForChart(parseFloat(v), s.max));
+        datasets.push(norm);
+        labelsForDatasets.push(`${s.name} (max ${s.max})`);
+
+        // Analyse complète du profil RIASEC
+        const top = getTopTwoTypes(norm);                    // Types dominants
+        const cons = evaluateConsistance(top[0], top[1]);    // Cohérence entre types
+        const D = computeDifferentiationIndex_on100(s.values, s.max);  // Différentiation
+        const cls = classifyDifferentiation(D);             // Classification H/F
+        const pred = computePredigerOn100(s.values, s.max); // Dimensions de Prediger
+
+        // Stockage des résultats pour le résumé
+        summaries.push({ name: s.name, top, consistance: cons, D, class: cls, pred });
+      });
+
+      // Étape 4: Calcul du coefficient de concordance de Kendall W
+      const kendallW = computeKendallW(selected);
+
+      // Étape 5: Visualisation et rapport
+      renderChart(datasets, labelsForDatasets);           // Crée le graphique
+
+      // Génère le résumé avec l'analyse Kendall W
+      let fullSummary = buildSummary(summaries);
+
+      // Ajoute l'analyse de concordance si disponible
+      if (selected.length >= 2) {
+        // Extrait seulement le niveau de concordance (avant le premier tiret)
+        const concordanceLevel = kendallW.interpretation.split(' - ')[0];
+        fullSummary = `CONCORDANCE: W=${kendallW.W}, χ²=${kendallW.chi2} (df=${kendallW.df}), p≈${kendallW.p ? kendallW.p.toFixed(3) : 'N/A'} → <strong>${concordanceLevel}</strong><br><br>` + fullSummary;
+      }
+
+      document.getElementById('summary').innerHTML = fullSummary;  // Affiche le résumé
+    });
+
+    // =================================================================================
+    // FONCTIONS UTILITAIRES ET GESTION DE L'ÉTAT
+    // =================================================================================
+    /**
+     * Nettoie l'affichage quand aucune échelle n'est sélectionnée
+     * Supprime le graphique et efface le résumé pour éviter la confusion
+     */
+    function updateEmptyIfNeeded() {
+      const anySelected = scales.some(s=>s.selected);
+      if (!anySelected) {
+        // Détruit le graphique s'il existe
+        if (window.myChart) {
+          window.myChart.destroy();
+          window.myChart = null;
+        }
+        // Efface le résumé
+        document.getElementById('summary').innerHTML = '';
+      }
+    }
+
+    /**
+     * Échappe les caractères HTML pour éviter les injections XSS
+     * @param {string} str - Chaîne à échapper
+     * @returns {string} Chaîne avec caractères HTML échappés
+     */
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (m)=> ({
+        '&':'&',
+        '<':'<',
+        '>':'>',
+        '"':'"',
+        "'":'&#39;'
+      })[m]);
+    }
+
+    // =================================================================================
+    // REDÉCLARATIONS POUR COMPATIBILITÉ (HOISTING)
+    // =================================================================================
+    /**
+     * Redéclaration de validateScale pour s'assurer qu'elle existe
+     * lors de la création des event listeners (histoire de hoisting)
+     * @param {object} s - Objet échelle à valider
+     * @returns {boolean} true si tous les scores sont valides
+     */
+    function validateScale(s) {
+      for (let i=0;i<6;i++) {
+        const raw = s.values[i];
+        const v = parseFloat(raw);
+        if (raw === '' || isNaN(v) || v < 0 || v > s.max) return false;
+      }
+      return true;
+    }
+
+    // =================================================================================
+    // FONCTIONS DE SAUVEGARDE ET DE RÉCUPÉRATION RIASEC
+    // =================================================================================
+
+    // Configuration Supabase (à remplacer par vos vraies clés)
+    const SUPABASE_CONFIG = {
+        url: 'https://oefhvkvvvikccrpgpsjk.supabase.co',
+        anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9lZmh2a3Z2dmlrY2NycGdwc2prIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2MDExODcsImV4cCI6MjA3NjE3NzE4N30.quWFAnfQoBeYo0sHG6dXYps1UzbyGA-3LkMk0sR0d8Q'
+    };
+
+    let supabaseClient = null;
+
+    function initializeSupabase() {
+        if (typeof supabase === 'undefined') {
+            console.error('Supabase library not loaded. Please include the Supabase CDN script.');
+            return false;
+        }
+
+        try {
+            supabaseClient = supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+            console.log('Supabase client initialized successfully');
+            return true;
+        } catch (error) {
+            console.error('Error initializing Supabase:', error);
+            return false;
+        }
+    }
+
+    function generateUniquePassword() {
+        const timestamp = Date.now().toString(36);
+        const randomStr = Math.random().toString(36).substring(2, 8);
+        return (timestamp + randomStr).toUpperCase();
+    }
+
+    // Sauvegarder la session actuelle
+    async function saveCurrentSession() {
+        if (scales.length === 0) {
+            alert('Aucune échelle à sauvegarder.');
+            return;
+        }
+
+        const sessionName = prompt('Nom de cette session RIASEC :', `Session RIASEC ${new Date().toLocaleDateString('fr-FR')}`);
+        if (!sessionName) return;
+
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const password = generateUniquePassword();
+            const sessionData = {
+                name: sessionName,
+                scales: scales.map(s => ({
+                    name: s.name,
+                    max: s.max,
+                    values: s.values,
+                    selected: s.selected
+                })),
+                scales_count: scales.length,
+                selected_scales_count: scales.filter(s => s.selected).length,
+                created_at: new Date().toISOString()
+            };
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .insert([{
+                    name: sessionName,
+                    password: password,
+                    scales_data: sessionData,
+                    scales_count: scales.length,
+                    selected_scales_count: scales.filter(s => s.selected).length,
+                    created_at: new Date().toISOString(),
+                    version: '1.0'
+                }])
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            const successMessage = `✅ Session sauvegardée avec succès!\n\n` +
+                                `📋 Nom: ${sessionName}\n` +
+                                `🔑 Mot de passe: ${password}\n` +
+                                `📊 Échelles: ${scales.length}\n\n` +
+                                `💡 Notez ce mot de passe pour récupérer la session plus tard.`;
+
+            alert(successMessage);
+            console.log('Session sauvegardée:', data.id);
+
+        } catch (error) {
+            console.error('Erreur lors de la sauvegarde:', error);
+            alert(`❌ Erreur lors de la sauvegarde: ${error.message}\n\nVérifiez votre configuration Supabase dans le code.`);
+        }
+    }
+
+    // Récupérer une session par mot de passe (ou mode admin avec 'coP1')
+    async function loadSessionFromPassword() {
+        const password = prompt('Entrez le mot de passe de la session:');
+        if (!password || password.length < 2) {
+            alert('Le mot de passe doit contenir au moins 2 caractères.');
+            return;
+        }
+
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            // Mode administrateur avec le mot de passe 'coP1'
+            if (password.toLowerCase() === 'cop1') {
+                await loadAdminMode();
+                return;
+            }
+
+            // Mode normal : récupération par mot de passe unique
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('*')
+                .eq('password', password)
+                .single();
+
+            if (error) {
+                if (error.code === 'PGRST116') {
+                    alert('Aucune session trouvée avec ce mot de passe.');
+                } else {
+                    throw error;
+                }
+                return;
+            }
+
+            // Restaurer les échelles depuis les données sauvegardées
+            restoreSession(data);
+
+        } catch (error) {
+            console.error('Erreur lors de la récupération:', error);
+            alert(`❌ Erreur lors de la récupération: ${error.message}`);
+        }
+    }
+
+    // Restaurer une session depuis les données sauvegardées
+    function restoreSession(sessionData) {
+        try {
+            // Vider les échelles actuelles
+            scales = [];
+            scaleIdCounter = 0;
+            document.getElementById('scalesContainer').innerHTML = '';
+            document.getElementById('summary').innerHTML = '';
+
+            if (window.myChart) {
+                window.myChart.destroy();
+                window.myChart = null;
+            }
+
+            // Recréer les échelles depuis les données sauvegardées
+            if (sessionData.scales_data && sessionData.scales_data.scales) {
+                sessionData.scales_data.scales.forEach(scaleData => {
+                    addScale(scaleData.name, scaleData.max, scaleData.values);
+                    const newScale = scales[scales.length - 1];
+                    newScale.selected = scaleData.selected;
+                    const checkbox = document.getElementById(`select-${newScale.id}`);
+                    if (checkbox) checkbox.checked = scaleData.selected;
+                });
+            }
+
+            alert(`✅ Session "${sessionData.name}" restaurée avec succès!\n` +
+                  `📅 Créée le: ${new Date(sessionData.created_at).toLocaleDateString('fr-FR')}\n` +
+                  `📊 Échelles: ${sessionData.scales_count}`);
+
+        } catch (error) {
+            console.error('Erreur lors de la restauration:', error);
+            alert(`❌ Erreur lors de la restauration: ${error.message}`);
+        }
+    }
+
+    // Mode administrateur : interface graphique pour choisir les sessions
+    async function loadAdminMode() {
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            if (data.length === 0) {
+                alert('🔐 MODE ADMINISTRATEUR\n\nAucune session trouvée dans la base de données.');
+                return;
+            }
+
+            // Créer une interface graphique pour sélectionner les sessions
+            await showAdminSessionSelector(data);
+
+        } catch (error) {
+            console.error('Erreur en mode administrateur:', error);
+            alert(`❌ Erreur en mode administrateur: ${error.message}`);
+        }
+    }
+
+    // Afficher l'interface graphique de sélection des sessions
+    async function showAdminSessionSelector(sessions) {
+        return new Promise((resolve) => {
+            // Créer la fenêtre modale
+            const modal = document.createElement('div');
+            modal.id = 'adminModal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10000;
+                font-family: Arial, sans-serif;
+            `;
+
+            // Créer le contenu de la fenêtre
+            const modalContent = document.createElement('div');
+            modalContent.style.cssText = `
+                background: white;
+                border-radius: 15px;
+                padding: 25px;
+                max-width: 90%;
+                max-height: 80%;
+                overflow-y: auto;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            `;
+
+            // En-tête
+            const header = document.createElement('h2');
+            header.textContent = '🔐 MODE ADMINISTRATEUR - Sélectionnez une session';
+            header.style.cssText = `
+                margin: 0 0 20px 0;
+                color: #2c3e50;
+                text-align: center;
+                border-bottom: 2px solid #667eea;
+                padding-bottom: 15px;
+            `;
+
+            // Liste des sessions
+            const sessionsList = document.createElement('div');
+            sessionsList.style.cssText = `
+                display: grid;
+                gap: 15px;
+                margin-bottom: 20px;
+            `;
+
+            // Créer un bouton pour chaque session
+            sessions.forEach((session, index) => {
+                const sessionButton = document.createElement('button');
+                sessionButton.className = 'session-button';
+
+                const date = new Date(session.created_at).toLocaleDateString('fr-FR');
+                const time = new Date(session.created_at).toLocaleTimeString('fr-FR');
+
+                sessionButton.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <div style="text-align: left;">
+                            <div style="font-weight: bold; font-size: 1.1em; color: #2c3e50;">${session.name}</div>
+                            <div style="font-size: 0.9em; color: #6c757d; margin-top: 5px;">
+                                📅 ${date} ${time} | 📊 ${session.scales_count} échelles
+                            </div>
+                            <div style="font-size: 0.8em; color: #888; margin-top: 3px; font-family: monospace;">
+                                🔑 ${session.password}
+                            </div>
+                        </div>
+                        <div style="font-weight: bold; color: #667eea; font-size: 1.2em;">
+                            #${index + 1}
+                        </div>
+                    </div>
+                `;
+
+                sessionButton.style.cssText = `
+                    width: 100%;
+                    padding: 15px;
+                    border: 2px solid #e1e8ed;
+                    border-radius: 10px;
+                    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+                    cursor: pointer;
+                    text-align: left;
+                    transition: all 0.3s ease;
+                    font-size: 0.9em;
+                `;
+
+                sessionButton.onmouseover = () => {
+                    sessionButton.style.borderColor = '#667eea';
+                    sessionButton.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                    sessionButton.style.color = 'white';
+                    sessionButton.querySelector('div').style.color = 'white';
+                };
+
+                sessionButton.onmouseout = () => {
+                    sessionButton.style.borderColor = '#e1e8ed';
+                    sessionButton.style.background = 'linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%)';
+                    sessionButton.style.color = 'inherit';
+                    sessionButton.querySelector('div').style.color = '';
+                };
+
+                sessionButton.onclick = () => {
+                    document.body.removeChild(modal);
+                    console.log('Session sélectionnée:', session);
+                    restoreSession(session);
+                    resolve();
+                };
+
+                sessionsList.appendChild(sessionButton);
+            });
+
+            // Bouton annuler
+            const cancelButton = document.createElement('button');
+            cancelButton.textContent = '❌ Annuler';
+            cancelButton.style.cssText = `
+                background: #dc3545;
+                color: white;
+                border: none;
+                padding: 12px 25px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 1em;
+                font-weight: bold;
+                width: 100%;
+                margin-top: 15px;
+            `;
+
+            cancelButton.onclick = () => {
+                document.body.removeChild(modal);
+                resolve();
+            };
+
+            // Assembler la fenêtre
+            modalContent.appendChild(header);
+            modalContent.appendChild(sessionsList);
+            modalContent.appendChild(cancelButton);
+            modal.appendChild(modalContent);
+            document.body.appendChild(modal);
+
+            // Fermer en cliquant en dehors
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                    resolve();
+                }
+            };
+        });
+    }
+
+    // Lister les sessions disponibles (pour sélection)
+    async function listAvailableSessions() {
+        try {
+            if (!supabaseClient && !initializeSupabase()) {
+                throw new Error('Impossible d\'initialiser la connexion à la base de données');
+            }
+
+            const { data, error } = await supabaseClient
+                .from('riasec_sessions')
+                .select('id, name, created_at, scales_count, selected_scales_count')
+                .order('created_at', { ascending: false })
+                .limit(10);
+
+            if (error) throw error;
+
+            if (data.length === 0) {
+                alert('Aucune session trouvée dans la base de données.');
+                return;
+            }
+
+            // Créer une liste des sessions disponibles
+            const sessionList = data.map((session, index) =>
+                `${index + 1}. ${session.name}\n` +
+                `   Créée le: ${new Date(session.created_at).toLocaleDateString('fr-FR')}\n` +
+                `   Échelles: ${session.scales_count}`
+            ).join('\n\n');
+
+            alert(`📋 Sessions disponibles:\n\n${sessionList}\n\n💡 Utilisez le mot de passe unique pour charger une session spécifique.`);
+
+        } catch (error) {
+            console.error('Erreur lors de la liste des sessions:', error);
+            alert(`❌ Erreur lors de la récupération des sessions: ${error.message}`);
+        }
+    }
+
+    // Event listeners pour les boutons de sauvegarde/chargement
+    document.getElementById('saveBtn').addEventListener('click', saveCurrentSession);
+    document.getElementById('loadBtn').addEventListener('click', loadSessionFromPassword);
+  </script>
+</body>
+</html>
+```
