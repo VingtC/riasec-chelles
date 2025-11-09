@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Comparateur RIASEC</title>
+  <title>Comparateur RIASEC </title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
@@ -206,10 +206,28 @@
      * Crée automatiquement deux échelles d'exemple au démarrage
      */
     window.addEventListener('DOMContentLoaded', () => {
-      // Ajoute une échelle d'autoévaluation (notation 1-5)
-      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
-      // Ajoute une échelle de test en ligne (notation 0-100)
-      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+      // Vérifier les paramètres URL pour pré-remplir les données
+      const urlParams = new URLSearchParams(window.location.search);
+      const r = urlParams.get('r');
+      const i = urlParams.get('i');
+      const a = urlParams.get('a');
+      const s = urlParams.get('s');
+      const e = urlParams.get('e');
+      const c = urlParams.get('c');
+      const scale = urlParams.get('scale') || 'Test RIASEC';
+      const max = parseFloat(urlParams.get('max')) || 100;
+
+      if (r !== null && i !== null && a !== null && s !== null && e !== null && c !== null) {
+        // Pré-remplir avec les données de l'URL
+        const values = [parseFloat(r), parseFloat(i), parseFloat(a), parseFloat(s), parseFloat(e), parseFloat(c)];
+        addScale(scale, max, values);
+        // Ajouter aussi les échelles par défaut
+        addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      } else {
+        // Comportement par défaut
+        addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+        addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+      }
     });
 
     // =================================================================================
