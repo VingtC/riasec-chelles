@@ -2,13 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Comparateur RIASEC — Prediger (Objets/Personnes & Faits/Idées)</title>
+  <title>Comparateur RIASEC </title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 18px; color:#222; }
     header { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
     h1 { font-size:1.2rem; margin:0; }
+    .riasec-image { width: 80px; height: auto; }
     .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .scales { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
     .scale {
@@ -111,6 +112,10 @@
         padding: 10px 15px;
         font-size: 0.9rem;
       }
+      .riasec-image {
+        width: 50px;
+        height: auto;
+      }
     }
   </style>
 </head>
@@ -133,26 +138,32 @@
 
     <div id="scalesContainer" class="scales"></div>
 
-    <div id="chart-wrap">
-      <canvas id="riasecChart"></canvas>
-      <div id="summary" aria-live="polite"></div>
+      <div id="chart-wrap">
+        <canvas id="riasecChart"></canvas>
+        <div id="summary" aria-live="polite"></div>
 
-      <ul class="note" id="footnote">
-        <strong>La différentiation </strong>est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltrame <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a>
-      </ul>
+        <div style="text-align: center; margin: 15px 0;">
+          <button id="understandBtn" class="btn btn-info" title="Comprendre les résultats" style="font-size: 0.9rem;">📖 Comprendre les résultats</button>
+        </div>
 
-      <div class="note" id="diff-interpretation">
-        <strong>Interprétation de la différenciation</strong> : un indice de différenciation étalonné en classe IV indique un profil RIASEC moyennement différencié ; en classe I, II ou III le profil est faiblement différencié ; en classe V, VI ou VII le profil est fortement différencié.
+        <div id="explanations" style="display: none;">
+          <ul class="note" id="footnote">
+            <strong>La différentiation </strong>est calculée via la technique du Pr Vignaud et avec les étalonnages du RIASEC Flash 2 du Fabien Beltrame <a href="http://deporientation.free.fr/Ressources/Manuel_RIASECFlash2_V3.1.pdf" target="_blank">référence page 17</a>
+          </ul>
+
+          <div class="note" id="diff-interpretation">
+            <strong>Interprétation de la différenciation</strong> : un indice de différentiation étalonné en classe IV indique un profil RIASEC moyennement différencié ; en classe I, II ou III le profil est faiblement différencié ; en classe V, VI ou VII le profil est fortement différencié.
+          </div>
+
+          <div class="prediger" id="prediger-note">
+            Les <strong>dimensions de Prediger</strong> (calculées avec la méthode de <a href="https://www.researchgate.net/publication/232418263_Adherence_to_RIASEC_Structure_as_a_Key_Career_Decision_Construct" target="_blank">Tracey</a>) sont : <em>Objets vs Personnes</em> et <em>Faits vs Idées</em>.
+          </div>
+
+          <div class="note" id="kendall-note">
+            <strong>Analyse de concordance (Kendall W)</strong> : Le coefficient W mesure l'accord entre plusieurs échelles RIASEC sur le classement des types. W varie de 0 (aucune concordance) à 1 (concordance parfaite). Le test de significativité indique si l'accord observé est statistiquement fiable.
+          </div>
+        </div>
       </div>
-
-      <div class="prediger" id="prediger-note">
-        Les <strong>dimensions de Prediger</strong> (calculées avec la méthode de <a href="https://www.researchgate.net/publication/232418263_Adherence_to_RIASEC_Structure_as_a_Key_Career_Decision_Construct" target="_blank">Tracey</a>) sont : <em>Objets vs Personnes</em> et <em>Faits vs Idées</em>.
-      </div>
-
-      <div class="note" id="kendall-note">
-        <strong>Analyse de concordance (Kendall W)</strong> : Le coefficient W mesure l'accord entre plusieurs échelles RIASEC sur le classement des types. W varie de 0 (aucune concordance) à 1 (concordance parfaite). Le test de significativité indique si l'accord observé est statistiquement fiable.
-      </div>
-    </div>
   </main>
 
   <script>
@@ -161,6 +172,14 @@
     // =================================================================================
     // Labels RIASEC dans l'ordre standard
     const LABELS = ['R','I','A','S','E','C'];
+
+    // Preload background image to avoid mobile display issues
+    let bgImage = new Image();
+    bgImage.src = 'RIASEC Plan de travail 1.svg';
+    let bgImageLoaded = false;
+    bgImage.onload = () => {
+      bgImageLoaded = true;
+    };
     // Compteur pour générer des IDs uniques pour chaque échelle
     let scaleIdCounter = 0;
     // Stockage de toutes les échelles créées
@@ -206,10 +225,28 @@
      * Crée automatiquement deux échelles d'exemple au démarrage
      */
     window.addEventListener('DOMContentLoaded', () => {
-      // Ajoute une échelle d'autoévaluation (notation 1-5)
-      addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
-      // Ajoute une échelle de test en ligne (notation 0-100)
-      addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+      // Vérifier les paramètres URL pour pré-remplir les données
+      const urlParams = new URLSearchParams(window.location.search);
+      const r = urlParams.get('r');
+      const i = urlParams.get('i');
+      const a = urlParams.get('a');
+      const s = urlParams.get('s');
+      const e = urlParams.get('e');
+      const c = urlParams.get('c');
+      const scale = urlParams.get('scale') || 'Test RIASEC';
+      const max = parseFloat(urlParams.get('max')) || 100;
+
+      if (r !== null && i !== null && a !== null && s !== null && e !== null && c !== null) {
+        // Pré-remplir avec les données de l'URL
+        const values = [parseFloat(r), parseFloat(i), parseFloat(a), parseFloat(s), parseFloat(e), parseFloat(c)];
+        addScale(scale, max, values);
+        // Ajouter aussi les échelles par défaut
+        addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+      } else {
+        // Comportement par défaut
+        addScale('Autoévaluation', 5, [0,0,0,0,0,0]);
+        addScale('Test en ligne', 100, [0,0,0,0,0,0]);
+      }
     });
 
     // =================================================================================
@@ -639,6 +676,38 @@
         })
       };
 
+      // Plugin pour ajouter l'image de fond RIASEC
+      const backgroundImagePlugin = {
+        id: 'backgroundImage',
+        beforeDraw: (chart) => {
+          if (!bgImageLoaded) return;
+          const { ctx, chartArea: { left, top, width, height } } = chart;
+          // Calculer les dimensions pour centrer l'image
+          const imgAspectRatio = bgImage.width / bgImage.height;
+          const chartAspectRatio = width / height;
+
+          let drawWidth, drawHeight, drawX, drawY;
+
+          if (imgAspectRatio > chartAspectRatio) {
+            // Image plus large que le graphique
+            drawWidth = width * 0.8; // 80% de la largeur du graphique
+            drawHeight = drawWidth / imgAspectRatio;
+          } else {
+            // Image plus haute que le graphique
+            drawHeight = height * 0.8; // 80% de la hauteur du graphique
+            drawWidth = drawHeight * imgAspectRatio;
+          }
+
+          drawX = left + (width - drawWidth) / 2;
+          drawY = top + (height - drawHeight) / 2;
+
+          // Dessiner l'image avec une faible opacité
+          ctx.globalAlpha = 0.1;
+          ctx.drawImage(bgImage, drawX, drawY, drawWidth, drawHeight);
+          ctx.globalAlpha = 1; // Remettre l'opacité normale
+        }
+      };
+
       // Configuration du graphique radar
       const config = {
         type: 'radar',
@@ -712,7 +781,8 @@
               borderWidth: 3
             }
           }
-        }
+        },
+        plugins: [backgroundImagePlugin]
       };
 
       // Récupère le canvas et crée/détruit le graphique
@@ -816,7 +886,32 @@
         fullSummary = `CONCORDANCE : W=${kendallW.W}, χ²=${kendallW.chi2} (df=${kendallW.df}), p≈${kendallW.p ? kendallW.p.toFixed(3) : 'N/A'} → <strong>${concordanceLevel}</strong><br><br>` + fullSummary;
       }
 
-      document.getElementById('summary').innerHTML = fullSummary;  // Affiche le résumé
+      // Ajoute la section d'exploration des formations et métiers
+      const explorationSection = `
+        <div class="exploration-section" style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #dee2e6;">
+            <h3 style="color: #495057; margin-bottom: 10px; font-size: 1.1em;">🔍 Explorez vos formations et métiers</h3>
+            <p style="color: #6c757d; margin-bottom: 15px; line-height: 1.4; font-size: 0.9em;">
+                Pour une interprétation approfondie de vos résultats, nous vous invitons à vous faire accompagner par un psyEN.
+                En attendant, explorez les formations et métiers associés à votre profil RIASEC.
+            </p>
+            <div class="search-buttons" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;">
+                <button onclick="openRIASECExplorer('bac')" style="background-color: #007bff; color: white; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background-color 0.3s; white-space: normal; line-height: 1.3;">
+                    🎓 Bac Pro & CAP - Académie de Paris
+                </button>
+                <button onclick="openRIASECExplorer('parcoursup')" style="background-color: #28a745; color: white; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background-color 0.3s; white-space: normal; line-height: 1.3;">
+                    🎓 Formations Supérieures - Parcoursup
+                </button>
+                <button onclick="openRIASECExplorer('total')" style="background-color: #6f42c1; color: white; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background-color 0.3s; white-space: normal; line-height: 1.3;">
+                    📚 Toutes les formations
+                </button>
+                <button onclick="openRIASECExplorer('metiers')" style="background-color: #fd7e14; color: white; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background-color 0.3s; white-space: normal; line-height: 1.3;">
+                    💼 Métiers correspondants
+                </button>
+            </div>
+        </div>
+      `;
+
+      document.getElementById('summary').innerHTML = fullSummary + explorationSection;  // Affiche le résumé et la section d'exploration
     });
 
     // =================================================================================
@@ -1435,6 +1530,37 @@
     // Event listeners pour les boutons de sauvegarde/chargement
     document.getElementById('saveBtn').addEventListener('click', saveCurrentSession);
     document.getElementById('loadBtn').addEventListener('click', loadSessionFromPassword);
+
+    // Event listener pour le bouton "Comprendre les résultats"
+    document.getElementById('understandBtn').addEventListener('click', function() {
+      const explanations = document.getElementById('explanations');
+      const isVisible = explanations.style.display !== 'none';
+      explanations.style.display = isVisible ? 'none' : 'block';
+      this.textContent = isVisible ? '📖 Comprendre les résultats' : '📖 Masquer les explications';
+    });
+
+    // Fonction pour ouvrir les moteurs de recherche RIASEC
+    function openRIASECExplorer(type) {
+      // Pour le comparateur RIASEC, on ouvre simplement les liens sans pré-remplir de profil
+      let url;
+      switch (type) {
+        case 'bac':
+          url = 'https://vingtc.github.io/RIASEC/#';
+          break;
+        case 'parcoursup':
+          url = 'https://vingtc.github.io/formationsup-RIASEC/#';
+          break;
+        case 'total':
+          url = 'https://vingtc.github.io/RIASEC-tot/#';
+          break;
+        case 'metiers':
+          url = 'https://vingtc.github.io/RIASEC-m-tiers/#';
+          break;
+        default:
+          return;
+      }
+      window.open(url, '_blank');
+    }
   </script>
 </body>
 </html>
