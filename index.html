@@ -172,6 +172,14 @@
     // =================================================================================
     // Labels RIASEC dans l'ordre standard
     const LABELS = ['R','I','A','S','E','C'];
+
+    // Preload background image to avoid mobile display issues
+    let bgImage = new Image();
+    bgImage.src = 'RIASEC Plan de travail 1.svg';
+    let bgImageLoaded = false;
+    bgImage.onload = () => {
+      bgImageLoaded = true;
+    };
     // Compteur pour générer des IDs uniques pour chaque échelle
     let scaleIdCounter = 0;
     // Stockage de toutes les échelles créées
@@ -672,34 +680,31 @@
       const backgroundImagePlugin = {
         id: 'backgroundImage',
         beforeDraw: (chart) => {
+          if (!bgImageLoaded) return;
           const { ctx, chartArea: { left, top, width, height } } = chart;
-          const image = new Image();
-          image.src = 'RIASEC Plan de travail 1.svg';
-          image.onload = () => {
-            // Calculer les dimensions pour centrer l'image
-            const imgAspectRatio = image.width / image.height;
-            const chartAspectRatio = width / height;
+          // Calculer les dimensions pour centrer l'image
+          const imgAspectRatio = bgImage.width / bgImage.height;
+          const chartAspectRatio = width / height;
 
-            let drawWidth, drawHeight, drawX, drawY;
+          let drawWidth, drawHeight, drawX, drawY;
 
-            if (imgAspectRatio > chartAspectRatio) {
-              // Image plus large que le graphique
-              drawWidth = width * 0.8; // 80% de la largeur du graphique
-              drawHeight = drawWidth / imgAspectRatio;
-            } else {
-              // Image plus haute que le graphique
-              drawHeight = height * 0.8; // 80% de la hauteur du graphique
-              drawWidth = drawHeight * imgAspectRatio;
-            }
+          if (imgAspectRatio > chartAspectRatio) {
+            // Image plus large que le graphique
+            drawWidth = width * 0.8; // 80% de la largeur du graphique
+            drawHeight = drawWidth / imgAspectRatio;
+          } else {
+            // Image plus haute que le graphique
+            drawHeight = height * 0.8; // 80% de la hauteur du graphique
+            drawWidth = drawHeight * imgAspectRatio;
+          }
 
-            drawX = left + (width - drawWidth) / 2;
-            drawY = top + (height - drawHeight) / 2;
+          drawX = left + (width - drawWidth) / 2;
+          drawY = top + (height - drawHeight) / 2;
 
-            // Dessiner l'image avec une faible opacité
-            ctx.globalAlpha = 0.1;
-            ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-            ctx.globalAlpha = 1; // Remettre l'opacité normale
-          };
+          // Dessiner l'image avec une faible opacité
+          ctx.globalAlpha = 0.1;
+          ctx.drawImage(bgImage, drawX, drawY, drawWidth, drawHeight);
+          ctx.globalAlpha = 1; // Remettre l'opacité normale
         }
       };
 
